@@ -10,6 +10,9 @@ _Last updated: 2026-10-27_
   (negative `dt`) and leftover traces from up to a week earlier (~97% duplicate points,
   double-counted coverage); dropped as `stray_rows` (42k on 2025-10-29). Verified one
   partition per release on real data. 2025 tars put traces first, so no heatmap to skip.
+- Undecodable trace files are skipped and listed (`max_corrupt_traces: 50` per day). Three
+  days (2026-04-01, 04-30, 05-04) failed on one bad file each before this; reloaded after
+  the backfill. No prod release: 2025-12-25, 2026-05-05..07, 2026-06-11.
 - M0: scaffold, config, CI, public repo (thumplik/OSINT-tanker-tracker).
 - M1 core: parsers, fleet filter, H3 cells, coverage counts, date-partitioned Parquet.
 - Parser verified on real dumps (readsb 3.16.15); `flags & 8` geometric altitude fixed.
