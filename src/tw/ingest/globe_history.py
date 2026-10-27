@@ -92,8 +92,18 @@ def _is_trace_member(name: str) -> bool:
     return Path(name).name.startswith("trace_full_")
 
 
-def iter_trace_docs_from_tar(tar: tarfile.TarFile) -> Iterator[dict[str, Any]]:
+def iter_trace_docs_from_tar(
+    tar: tarfile.TarFile, stop_after_traces: bool = False
+) -> Iterator[dict[str, Any]]:
+    """Yield trace documents. With `stop_after_traces`, stop at the first member after the
+    `traces/` subtree: tar writes a directory's subtree contiguously, so nothing is missed and a
+    stream does not have to read the heatmap files that sometimes follow it."""
+    in_traces = False
     for member in tar:
+        if member.name.removeprefix("./").startswith("traces"):
+            in_traces = True
+        elif in_traces and stop_after_traces:
+            return
         if not member.isfile() or not _is_trace_member(member.name):
             continue
         fh = tar.extractfile(member)
@@ -104,7 +114,7 @@ def iter_trace_docs_from_tar(tar: tarfile.TarFile) -> Iterator[dict[str, Any]]:
 def iter_trace_docs_from_stream(stream: IO[bytes]) -> Iterator[dict[str, Any]]:
     """Read a tar from a non-seekable stream (e.g. concatenated HTTP parts) in one pass."""
     with tarfile.open(fileobj=stream, mode="r|*") as tar:
-        yield from iter_trace_docs_from_tar(tar)
+        yield from iter_trace_docs_from_tar(tar, stop_after_traces=True)
 
 
 def iter_trace_docs(path: Path) -> Iterator[dict[str, Any]]:

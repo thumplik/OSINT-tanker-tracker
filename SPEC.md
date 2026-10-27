@@ -210,6 +210,7 @@ Pick any past date (or date range) and see the system exactly as it would have l
 ### Point-in-time correctness (non-negotiable)
 
 - Baselines are stored as dated snapshots (`baselines/as_of=YYYY-MM-DD/`). Viewing a past day always uses the snapshot from that day, never today's baseline. This prevents future data leaking into the past.
+- The hex → type registry (§3) is stored per day (`registry/date=YYYY-MM-DD/`). A day's untyped hexes are resolved only from registry entries dated that day or earlier.
 - Historical alerts are shown exactly as they were created (status, wording, draft). Retrospective re-runs are a separate, clearly labeled layer and never overwrite them.
 - Every detector and baseline run records its config hash and code version, so a past alert can be reproduced.
 

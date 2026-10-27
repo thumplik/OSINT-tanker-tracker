@@ -41,3 +41,11 @@ def test_unknown_provider_is_an_error():
 def test_invalid_bucket():
     with pytest.raises(ValueError):
         TokenBucket(rate_per_s=0, capacity=1)
+
+
+def test_from_config_shares_rate_across_workers():
+    one = RateLimiter.from_config()
+    four = RateLimiter.from_config(share=4)
+    assert four._buckets["adsb_lol"].rate_per_s == one._buckets["adsb_lol"].rate_per_s / 4
+    with pytest.raises(ValueError):
+        RateLimiter.from_config(share=0)

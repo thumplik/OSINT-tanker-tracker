@@ -73,3 +73,26 @@ def test_real_dump_traces(fixtures):
 
     assert all(p.is_non_icao for p in by_hex["2b7bf0"])
     assert all(not p.is_non_icao for h, v in by_hex.items() if h != "2b7bf0" for p in v)
+
+
+def test_stream_stops_after_traces_subtree(fixtures):
+    import io
+    import tarfile
+
+    from tw.ingest.globe_history import iter_trace_docs_from_stream
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        for f in sorted((fixtures / "real_2026-10-25").rglob("trace_full_*")):
+            tar.add(f, arcname=f"./traces/{f.parent.name}/{f.name}")
+        info = tarfile.TarInfo("./heatmap/00.bin.ttf")
+        info.size = 10
+        tar.addfile(info, io.BytesIO(b"x" * 10))
+        # A trace outside traces/ after the heatmap would not exist in a real dump; it proves
+        # the reader stopped at the heatmap instead of reading on.
+        tar.add(
+            next((fixtures / "real_2026-10-25").rglob("trace_full_a99d05*")),
+            arcname="./zzz/trace_full_a99d05.json",
+        )
+    buf.seek(0)
+    assert len(list(iter_trace_docs_from_stream(buf))) == 6

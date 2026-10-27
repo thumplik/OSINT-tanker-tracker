@@ -56,11 +56,17 @@ class RateLimiter:
         self._buckets = {name: TokenBucket(rate, cap) for name, (rate, cap) in limits.items()}
 
     @classmethod
-    def from_config(cls) -> RateLimiter:
+    def from_config(cls, share: int = 1) -> RateLimiter:
+        """Limits from `providers.yaml`. With `share=N`, each of N parallel processes gets 1/N
+        of every rate, so together they never exceed the configured limit."""
         from tw.config import load_yaml
 
+        if share < 1:
+            raise ValueError("share must be >= 1")
         limits = load_yaml("providers.yaml")["rate_limits"]
-        return cls({name: (float(rate), float(cap)) for name, (rate, cap) in limits.items()})
+        return cls(
+            {name: (float(rate) / share, float(cap)) for name, (rate, cap) in limits.items()}
+        )
 
     def acquire(self, provider: str) -> None:
         try:

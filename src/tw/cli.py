@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -41,34 +42,52 @@ def _history_days(args: argparse.Namespace) -> list[date]:
 
 
 def cmd_load_history(args: argparse.Namespace) -> int:
-    from tw.ingest.history_download import HistoryConfig, http_opener
-    from tw.ingest.load_history import load_day, load_dump
-    from tw.ingest.ratelimit import RateLimiter
+    from concurrent.futures import ProcessPoolExecutor, as_completed
 
-    fleet = load_fleet()
+    from tw.ingest.load_history import init_worker, load_day_in_worker, load_dump
+
     if args.path is not None:
+        fleet = load_fleet()
         sources = sorted(args.path.glob("*.tar*")) if args.tars else [args.path]
         for source in sources:
             _print_summary(source.name, load_dump(source, _data_dir(), fleet))
         return 0
 
-    cfg = HistoryConfig.load()
-    opener, limiter = http_opener(cfg), RateLimiter.from_config()
-    missing = []
-    for day in _history_days(args):
-        if args.skip_existing and partition_dir(_data_dir(), "points", day).exists():
-            print(f"{day.isoformat()}: already loaded, skipping")
-            continue
-        result = load_day(day, _data_dir(), fleet, cfg, opener, limiter)
-        if result is None:
-            missing.append(day)
-            print(f"{day.isoformat()}: no release found")
-            continue
-        tag, summary = result
-        _print_summary(tag, summary)
-    if missing:
-        print(f"{len(missing)} day(s) had no release: {', '.join(d.isoformat() for d in missing)}")
-    return 0
+    days = _history_days(args)
+    if args.skip_existing:
+        done = [d for d in days if partition_dir(_data_dir(), "points", d).exists()]
+        if done:
+            print(f"skipping {len(done)} day(s) already loaded")
+        days = [d for d in days if d not in done]
+    workers = max(1, min(args.workers, len(days) or 1))
+    started = time.monotonic()
+    missing: list[date] = []
+    failed: list[date] = []
+    skipped_bytes = 0
+    with ProcessPoolExecutor(workers, initializer=init_worker, initargs=(workers,)) as pool:
+        futures = [pool.submit(load_day_in_worker, d, _data_dir()) for d in days]
+        for future in as_completed(futures):
+            day, result, error = future.result()
+            if error is not None:
+                failed.append(day)
+                print(f"{day.isoformat()}: FAILED {error}")
+            elif result is None:
+                missing.append(day)
+                print(f"{day.isoformat()}: no release found")
+            else:
+                skipped_bytes += result.skipped_bytes
+                _print_summary(
+                    f"{result.tag} (skipped {result.skipped_bytes / 1e6:.0f} MB)", result.summary
+                )
+    loaded = len(days) - len(missing) - len(failed)
+    print(
+        f"loaded {loaded}/{len(days)} day(s) with {workers} worker(s) in "
+        f"{time.monotonic() - started:.0f}s; skipped {skipped_bytes / 1e9:.1f} GB of heatmaps"
+    )
+    for label, group in (("no release", missing), ("failed", failed)):
+        if group:
+            print(f"{label}: {', '.join(d.isoformat() for d in sorted(group))}")
+    return 1 if failed else 0
 
 
 def cmd_stats(args: argparse.Namespace) -> int:
@@ -108,6 +127,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--skip-existing", action="store_true", help="skip days that already have points"
+    )
+    p.add_argument(
+        "--workers", type=int, default=1, help="days to load in parallel (rate limits are shared)"
     )
     p.set_defaults(func=cmd_load_history)
 

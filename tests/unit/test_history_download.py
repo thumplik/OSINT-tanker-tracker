@@ -5,7 +5,13 @@ from datetime import date
 import pytest
 
 from tw.config import load_fleet
-from tw.ingest.history_download import HistoryConfig, open_day, part_suffixes
+from tw.ingest.history_download import (
+    HistoryConfig,
+    RangeNotSupported,
+    find_traces_offset,
+    open_day,
+    part_suffixes,
+)
 from tw.ingest.load_history import load_day
 from tw.store.parquet import read_day
 
@@ -18,7 +24,9 @@ CFG = HistoryConfig(
     timeout_s=1,
     max_attempts=2,
     user_agent="test",
+    skip_heatmap=False,
 )
+SKIP = HistoryConfig(**{**CFG.__dict__, "skip_heatmap": True})
 
 
 class CountingLimiter:
@@ -29,10 +37,10 @@ class CountingLimiter:
         self.calls.append(provider)
 
 
-def build_tar(src_dir) -> bytes:
+def build_tar(src_dir, fmt: int = tarfile.PAX_FORMAT) -> bytes:
     """A tar laid out like a real release: heatmap first, then traces/."""
     buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w") as tar:
+    with tarfile.open(fileobj=buf, mode="w", format=fmt) as tar:
         heat = b"\x00" * 3000
         info = tarfile.TarInfo("./heatmap/00.bin.ttf")
         info.size = len(heat)
@@ -42,14 +50,23 @@ def build_tar(src_dir) -> bytes:
     return buf.getvalue()
 
 
-def fake_server(files: dict[str, bytes]):
+def fake_server(files: dict[str, bytes], ranges: bool = True):
+    """Serves `files`; records (url, start, length) for each request. Supports byte ranges."""
     requested: list[str] = []
+    calls: list[tuple[str, int, int | None]] = []
 
-    def opener(url: str):
+    def opener(url: str, start: int = 0, length: int | None = None):
         requested.append(url)
+        calls.append((url, start, length))
         data = files.get(url)
-        return None if data is None else io.BytesIO(data)
+        if data is None:
+            return None
+        if (start or length is not None) and not ranges:
+            raise RangeNotSupported(url)
+        end = len(data) if length is None else start + length
+        return io.BytesIO(data[start:end])
 
+    opener.calls = calls  # type: ignore[attr-defined]
     return opener, requested
 
 
@@ -78,11 +95,58 @@ def test_streams_multi_part_release_into_store(tmp_path, fixtures):
     result = load_day(date(2026, 10, 25), tmp_path, load_fleet(), CFG, opener, limiter)
 
     assert result is not None
-    got_tag, summary = result
-    assert got_tag == tag and summary.traces == 6
+    got_tag, skipped, summary = result.tag, result.skipped_bytes, result.summary
+    assert got_tag == tag and summary.traces == 6 and skipped == 0
     assert read_day(tmp_path, "points", date(2026, 10, 25)).num_rows == 1523 + 1310 + 549
     # Every request, including the final 404 that ends the part list, was rate limited.
     assert len(limiter.calls) == len(requested) == len(files) + 1
+
+
+def heatmap_offset(data: bytes) -> int:
+    """Start of the first traces member, including any extended header in front of it."""
+    with tarfile.open(fileobj=io.BytesIO(data)) as tar:
+        members = tar.getmembers()
+    first = next(i for i, m in enumerate(members) if m.name.startswith("./traces"))
+    prev = members[first - 1]
+    return prev.offset_data + -(-prev.size // 512) * 512
+
+
+@pytest.mark.parametrize("fmt", [tarfile.PAX_FORMAT, tarfile.GNU_FORMAT])
+def test_finds_traces_offset_by_walking_headers(fixtures, fmt):
+    data = build_tar(fixtures / "real_2026-10-25", fmt)
+    url = "https://example.test/x.tar.aa"
+    opener, _ = fake_server({url: data})
+    limiter = CountingLimiter()
+    offset = find_traces_offset(url, opener, limiter, max_probes=50)
+    assert offset == heatmap_offset(data) > 3000
+    # One 512-byte probe per member up to the traces entry, all on the probe bucket.
+    assert all(length == 512 for _, _, length in opener.calls)
+    assert set(limiter.calls) == {"adsb_lol_history_probe"}
+
+
+def test_find_traces_offset_falls_back_to_zero():
+    url = "https://example.test/x.tar.aa"
+    garbage = b"not a tar header".ljust(4096, b"\x00")
+    assert find_traces_offset(url, fake_server({url: garbage})[0], CountingLimiter(), 50) == 0
+    no_ranges, _ = fake_server({url: garbage}, ranges=False)
+    assert find_traces_offset(url, no_ranges, CountingLimiter(), 50) == 0
+    assert find_traces_offset(url, fake_server({})[0], CountingLimiter(), 50) is None
+
+
+def test_skip_heatmap_loads_same_points_with_fewer_bytes(tmp_path, fixtures):
+    data = build_tar(fixtures / "real_2026-10-25")
+    tag = "v2026.10.25-planes-readsb-prod-0"
+    files = split_release("adsblol/globe_history_2026", tag, data, size=40_000)
+    opener, _ = fake_server(files)
+
+    result = load_day(date(2026, 10, 25), tmp_path, load_fleet(), SKIP, opener, CountingLimiter())
+
+    assert result is not None and result.skipped_bytes == heatmap_offset(data)
+    assert result.summary.traces == 6
+    assert read_day(tmp_path, "points", date(2026, 10, 25)).num_rows == 1523 + 1310 + 549
+    # The streamed read of the first part started after the heatmap.
+    stream_reads = [(u, st) for u, st, ln in opener.calls if ln is None and u.endswith(".aa")]
+    assert stream_reads == [(next(iter(files)), heatmap_offset(data))]
 
 
 def test_falls_back_to_next_years_repo_and_tmp_suffix():
@@ -90,7 +154,7 @@ def test_falls_back_to_next_years_repo_and_tmp_suffix():
     files = split_release("adsblol/globe_history_2026", tag, b"x" * 10, size=100)
     opener, requested = fake_server(files)
     found = open_day(date(2025, 12, 30), CFG, opener, CountingLimiter())
-    assert found is not None and found[0] == tag
+    assert found is not None and found.tag == tag
     assert [u.split("/")[4] for u in requested] == [
         "globe_history_2025",
         "globe_history_2026",

@@ -17,7 +17,8 @@ def test_load_dump_writes_date_partitions(tmp_path, fixtures):
 
     coverage = read_day(tmp_path, "coverage", date(2026, 7, 1))
     assert sum(coverage["aircraft"].to_pylist()) >= 5  # civil traffic counts toward coverage
-    assert load_registry(tmp_path)["ae1234"] == "K35R"
+    assert load_registry(tmp_path, date(2026, 7, 1))["ae1234"] == "K35R"
+    assert load_registry(tmp_path, date(2026, 6, 30)) == {}  # not known before that day
 
 
 def test_reload_is_idempotent(tmp_path, fixtures):
@@ -63,3 +64,36 @@ def test_load_real_traces(tmp_path, fixtures):
     assert day.num_rows == 1523 + 1310 + 549
     coverage = read_day(tmp_path, "coverage", date(2026, 10, 25))
     assert coverage.num_rows > 0
+
+
+def test_registry_resolves_from_earlier_days_only(tmp_path):
+    """A type learned on a later day must not resolve an earlier day's untyped hex."""
+
+    def dump(name: str, ts: int, type_code: str | None):
+        d = tmp_path / name / "traces" / "99"
+        d.mkdir(parents=True)
+        doc = {
+            "icao": "ae9999",
+            "t": type_code,
+            "timestamp": ts,
+            "trace": [[0, 26.0, 51.0, 24000, 400.0, 0.0, 0, 0, None, "adsb_icao"]],
+        }
+        (d / "trace_full_ae9999.json").write_text(json.dumps(doc))
+        return d.parents[1]
+
+    data = tmp_path / "data"
+    fleet = load_fleet()
+    # Day 3 knows ae9999 is a KC46; days 2 and 4 see it untyped.
+    load_dump(dump("d3", 1783036800, "KC46"), data, fleet, part="d3")  # 2026-07-03
+    load_dump(dump("d2", 1782950400, None), data, fleet, part="d2")  # 2026-07-02
+    load_dump(dump("d4", 1783123200, None), data, fleet, part="d4")  # 2026-07-04
+    assert read_day(data, "points", date(2026, 7, 2)).num_rows == 0
+    assert read_day(data, "points", date(2026, 7, 4))["type"].to_pylist() == ["KC46"]
+
+
+def test_untracked_military_types_feed_registry_without_points(tmp_path, fixtures):
+    load_dump(fixtures / "real_2026-10-25", tmp_path, load_fleet(), part="real")
+    registry = load_registry(tmp_path, date(2026, 10, 25))
+    assert registry["ae4ff0"] == "H60"  # untracked, but its type is still recorded
+    day = read_day(tmp_path, "points", date(2026, 10, 25))
+    assert "ae4ff0" not in set(day["hex"].to_pylist())

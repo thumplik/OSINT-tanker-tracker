@@ -3,7 +3,8 @@ rate_limits:
   adsb_lol: [1.0, 1]
   airplanes_live: [1.0, 1]
   adsb_fi: [1.0, 1]
-  adsb_lol_history: [0.5, 1]     # release downloads for globe_history
+  adsb_lol_history: [0.5, 1]     # globe_history release part downloads
+  adsb_lol_history_probe: [4.0, 4]  # 512-byte tar header range reads (~50 per day)
 attribution:
   adsb_lol: "adsb.lol (ODbL)"
   airplanes_live: "airplanes.live"
@@ -26,3 +27,6 @@ history:
   timeout_s: 60
   max_attempts: 3
   user_agent: "tanker-watch/0.1 (+https://github.com/thumplik/OSINT-tanker-tracker)"
+  # Skip the ~800 MB ./heatmap prefix of each tar by walking tar headers with range requests.
+  skip_heatmap: true
+  max_header_probes: 200

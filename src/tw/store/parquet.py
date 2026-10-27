@@ -100,21 +100,30 @@ def read_day(root: Path, dataset: str, day: date) -> pa.Table:
         con.close()
 
 
-REGISTRY_FILE = "registry.parquet"
+REGISTRY_SCHEMA = pa.schema([("hex", pa.string()), ("type", pa.string())])
 
 
-def load_registry(root: Path) -> dict[str, str]:
-    path = root / REGISTRY_FILE
-    if not path.exists():
+def load_registry(root: Path, as_of: date) -> dict[str, str]:
+    """hex → type from registry partitions dated on or before `as_of` (latest date wins).
+
+    Registry partitions are tiny (hundreds of rows), so reading all past ones is cheap. Only
+    days up to `as_of` are used, so a later load never changes how an earlier day resolves.
+    """
+    base = root / "registry"
+    if not base.exists():
         return {}
-    table = pq.read_table(path)
-    return dict(zip(table["hex"].to_pylist(), table["type"].to_pylist(), strict=True))
+    days = sorted(
+        d for d in base.iterdir() if d.name.startswith("date=") and d.name[5:] <= as_of.isoformat()
+    )
+    registry: dict[str, str] = {}
+    for day_dir in days:
+        for f in sorted(day_dir.glob("part-*.parquet")):
+            table = pq.read_table(f)
+            registry.update(zip(table["hex"].to_pylist(), table["type"].to_pylist(), strict=True))
+    return registry
 
 
-def save_registry(root: Path, registry: Mapping[str, str]) -> None:
-    root.mkdir(parents=True, exist_ok=True)
-    items = sorted(registry.items())
-    table = pa.table({"hex": [h for h, _ in items], "type": [t for _, t in items]})
-    tmp = root / (REGISTRY_FILE + ".tmp")
-    pq.write_table(table, tmp)
-    tmp.replace(root / REGISTRY_FILE)
+def save_registry(root: Path, day: date, observed: Mapping[str, str], part: str) -> None:
+    """Store the hex → type pairs observed in one day's dump."""
+    rows = [{"hex": h, "type": t} for h, t in sorted(observed.items())]
+    write_partition(root, "registry", day, rows, REGISTRY_SCHEMA, part)

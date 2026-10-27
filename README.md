@@ -83,13 +83,18 @@ uv run pytest
 ```
 
 Load history from [adsb.lol](https://github.com/adsblol) and check the counts. Each day is a
-~3.5 GB release that is streamed and filtered on the fly, so it is never stored on disk:
+~3.5 GB release that is streamed and filtered on the fly; only the tracked fleet and coverage
+counts are kept, about 4.4 MB per day (~1.6 GB per year). The ~800 MB of heatmap files at the
+start of each release is skipped with range requests.
 
 ```bash
-uv run tw load-history --days 7 --skip-existing      # last 7 complete UTC days
-uv run tw load-history --from 2026-10-01 --to 2026-10-25
+uv run tw load-history --days 7 --workers 4 --skip-existing   # last 7 complete UTC days
+uv run tw load-history --from 2025-10-01 --to 2026-09-30 --workers 4 --skip-existing
 uv run tw stats --date 2026-10-25
 ```
+
+`--workers N` loads N days in parallel and splits every rate limit N ways, so the total request
+rate never exceeds `config/providers.yaml`. A stopped run resumes with `--skip-existing`.
 
 Or load a local dump (a folder of `trace_full_*.json` files or a `.tar`):
 
@@ -103,7 +108,7 @@ Data goes to `./data` by default. Set `TW_DATA_DIR` to change it (see [`.env.exa
 
 | Command | Status | What it does |
 |---|---|---|
-| `tw load-history --days N` / `--from D --to D` | ✅ | Stream adsb.lol daily releases (rate-limited), filter to the fleet, write date-partitioned points and coverage |
+| `tw load-history --days N` / `--from D --to D` `[--workers N]` | ✅ | Stream adsb.lol daily releases (rate-limited, in parallel), filter to the fleet, write date-partitioned points and coverage |
 | `tw load-history --path <dir\|tar>` | ✅ | Same, from a local dump |
 | `tw stats --date YYYY-MM-DD` | ✅ | Count aircraft per family for one UTC day |
 | `tw replay`, `tw backtest` | M3 | Offline full pipeline and backtest report |
