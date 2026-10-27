@@ -5,10 +5,12 @@ rate_limits:
   adsb_fi: [1.0, 1]
   adsb_lol_history: [0.5, 1]     # globe_history release part downloads
   adsb_lol_history_probe: [4.0, 4]  # 512-byte tar header range reads (~50 per day)
+  ourairports: [0.5, 1]          # two CSV downloads per `tw airfields update`
 attribution:
   adsb_lol: "adsb.lol (ODbL)"
   airplanes_live: "airplanes.live"
   adsb_fi: "adsb.fi open data (https://adsb.fi)"
+  ourairports: "OurAirports (public domain, https://ourairports.com/data/)"
 
 # Coverage denominator (SPEC §5): count each aircraft at most once per this many seconds when
 # building per-cell hourly coverage. Keeps a full global day tractable.
@@ -32,3 +34,10 @@ history:
   max_header_probes: 200
   # Undecodable trace files are skipped and listed; more than this many fails the day.
   max_corrupt_traces: 50
+
+# Airfield reference data (SPEC §5), pulled by `tw airfields update` into config/airfields.csv.
+airfields:
+  airports_url: "https://davidmegginson.github.io/ourairports-data/airports.csv"
+  runways_url: "https://davidmegginson.github.io/ourairports-data/runways.csv"
+  types: [large_airport, medium_airport, small_airport]
+  min_runway_ft: 3000           # any surface: C-130s use dirt strips

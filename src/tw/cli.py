@@ -110,6 +110,69 @@ def cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def _range_days(args: argparse.Namespace) -> list[date]:
+    start = args.date or args.from_
+    end = args.date or args.to or start
+    return [start + timedelta(days=i) for i in range((end - start).days + 1)]
+
+
+def cmd_build_sorties(args: argparse.Namespace) -> int:
+    from concurrent.futures import ProcessPoolExecutor
+
+    from tw.tracks.sorties import build_day_in_worker, init_sortie_worker
+
+    days = _range_days(args)
+    started = time.monotonic()
+    totals = [0, 0, 0]
+    with ProcessPoolExecutor(max(1, args.workers), initializer=init_sortie_worker) as pool:
+        for result in pool.map(build_day_in_worker, days, [_data_dir()] * len(days)):
+            closed = result.sorties - result.open
+            print(
+                f"{result.day.isoformat()}: {result.sorties} sorties ({result.open} open), "
+                f"both ends {result.both_ends}/{closed}"
+            )
+            totals = [totals[0] + result.sorties, totals[1] + closed, totals[2] + result.both_ends]
+    print(
+        f"built {len(days)} day(s) in {time.monotonic() - started:.0f}s: {totals[0]} sorties, "
+        f"both ends on {totals[2]}/{totals[1]} closed"
+    )
+    return 0
+
+
+def cmd_sortie_stats(args: argparse.Namespace) -> int:
+    from tw.tracks.airfields import AirfieldIndex, load_airfields
+    from tw.tracks.sorties import latest_sorties, resolution_report
+
+    days = _range_days(args)
+    rows = latest_sorties(_data_dir(), days)
+    print(f"{days[0].isoformat()}..{days[-1].isoformat()}: {len(rows)} sorties")
+    for line in resolution_report(rows, AirfieldIndex(load_airfields())):
+        print(line)
+    return 0
+
+
+def cmd_airfields_update(_args: argparse.Namespace) -> int:
+    import urllib.request
+
+    from tw.config import load_yaml
+    from tw.ingest.ratelimit import RateLimiter
+    from tw.tracks.airfields import AIRFIELDS_PATH, PROVIDER, update_airfields
+
+    providers = load_yaml("providers.yaml")
+    limiter = RateLimiter.from_config()
+    user_agent = providers["history"]["user_agent"]
+
+    def fetch(url: str) -> bytes:
+        limiter.acquire(PROVIDER)
+        req = urllib.request.Request(url, headers={"User-Agent": user_agent})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return bytes(resp.read())
+
+    n = update_airfields(providers["airfields"], fetch)
+    print(f"wrote {n} airfields to {AIRFIELDS_PATH}")
+    return 0
+
+
 def _not_yet(milestone: str) -> int:
     print(f"not implemented yet (milestone {milestone}, see SPEC §14)", file=sys.stderr)
     return 2
@@ -139,6 +202,24 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("stats", help="per-family aircraft counts for one UTC day")
     p.add_argument("--date", type=date.fromisoformat, required=True)
     p.set_defaults(func=cmd_stats)
+
+    for name, func, help_ in (
+        ("build-sorties", cmd_build_sorties, "build sorties/date=D/ from stored points"),
+        ("sortie-stats", cmd_sortie_stats, "airfield resolution report for a date range"),
+    ):
+        p = sub.add_parser(name, help=help_)
+        when = p.add_mutually_exclusive_group(required=True)
+        when.add_argument("--date", type=date.fromisoformat, help="one UTC day")
+        when.add_argument("--from", dest="from_", type=date.fromisoformat, help="first UTC day")
+        p.add_argument("--to", type=date.fromisoformat, help="last UTC day (with --from)")
+        if func is cmd_build_sorties:
+            p.add_argument("--workers", type=int, default=1, help="days to build in parallel")
+        p.set_defaults(func=func)
+
+    p = sub.add_parser("airfields", help="airfield reference data")
+    airfields = p.add_subparsers(dest="action", required=True)
+    p = airfields.add_parser("update", help="download OurAirports into config/airfields.csv")
+    p.set_defaults(func=cmd_airfields_update)
 
     for name, milestone in [
         ("replay", "M3"),

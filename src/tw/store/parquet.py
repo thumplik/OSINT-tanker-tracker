@@ -43,6 +43,34 @@ COVERAGE_SCHEMA = pa.schema(
 )
 
 
+SORTIE_SCHEMA = pa.schema(
+    [
+        ("sortie_id", pa.string()),
+        ("hex", pa.string()),
+        ("type", pa.string()),
+        ("families", pa.list_(pa.string())),
+        ("callsign", pa.string()),
+        ("start_ts", pa.timestamp("us", tz="UTC")),
+        ("end_ts", pa.timestamp("us", tz="UTC")),
+        ("origin_icao", pa.string()),
+        ("dest_icao", pa.string()),
+        ("start_lat", pa.float64()),
+        ("start_lon", pa.float64()),
+        ("end_lat", pa.float64()),
+        ("end_lon", pa.float64()),
+        ("h3_cells", pa.list_(pa.string())),
+        ("max_alt", pa.int32()),
+        ("n_points", pa.int32()),
+        ("low_quality_share", pa.float64()),
+        ("end_reason", pa.string()),
+        ("is_open", pa.bool_()),
+        ("start_truncated", pa.bool_()),
+        ("is_orbit", pa.bool_()),
+        ("orbit_hours", pa.float64()),
+    ]
+)
+
+
 def partition_dir(root: Path, dataset: str, day: date) -> Path:
     return root / dataset / f"date={day.isoformat()}"
 
@@ -88,8 +116,7 @@ def read_day(root: Path, dataset: str, day: date) -> pa.Table:
     """Read exactly one date partition."""
     files = sorted(partition_dir(root, dataset, day).glob("part-*.parquet"))
     if not files:
-        schema = POINT_SCHEMA if dataset == "points" else COVERAGE_SCHEMA
-        return schema.empty_table()
+        return _SCHEMAS[dataset].empty_table()
     con = duckdb.connect()
     try:
         return con.sql(
@@ -101,6 +128,12 @@ def read_day(root: Path, dataset: str, day: date) -> pa.Table:
 
 
 REGISTRY_SCHEMA = pa.schema([("hex", pa.string()), ("type", pa.string())])
+_SCHEMAS = {
+    "points": POINT_SCHEMA,
+    "coverage": COVERAGE_SCHEMA,
+    "sorties": SORTIE_SCHEMA,
+    "registry": REGISTRY_SCHEMA,
+}
 
 
 def load_registry(root: Path, as_of: date) -> dict[str, str]:

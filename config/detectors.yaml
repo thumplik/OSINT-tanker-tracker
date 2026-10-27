@@ -5,10 +5,19 @@ baseline:
   mad_scale: 1.4826
   mad_floor: 1.0                # used when MAD is 0 so sparse keys don't give infinite z
 
+# Sortie segmentation and airfield resolution (SPEC §5).
 sortie:
   max_gap_minutes: 30
+  min_ground_seconds: 60        # shorter ground runs are touch-and-goes; the sortie continues
+  # A longer gap is a coverage hole, not a landing, if all three hold:
+  bridge_min_alt_ft: 10000      # aircraft at or above this on both sides of the gap
+  bridge_max_gap_hours: 6
+  bridge_max_speed_kt: 600      # great-circle distance / gap duration
+  min_points: 5                 # shorter sorties are noise and are dropped (and counted)
+  min_minutes: 5
   airfield_radius_km: 10
   airfield_max_agl_ft: 3000
+  lookback_days: 1              # days before D read to find flights airborne at midnight
 
 d1_volume_surge:
   window_hours: 24

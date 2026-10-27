@@ -1,0 +1,5 @@
+ident,icao,name,lat,lon,elevation_ft,runway_ft
+ETAR,ETAR,Ramstein Air Base,49.4369,7.6003,782,10499
+KDOV,KDOV,Dover Air Force Base,39.1295,-75.466,24,12902
+KIAB,KIAB,McConnell Air Force Base,37.6227,-97.2673,1371,12000
+KICT,KICT,Wichita Dwight D. Eisenhower National Airport,37.6499,-97.4331,1333,10301

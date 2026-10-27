@@ -2,49 +2,35 @@
 
 _Last updated: 2026-10-27_
 
-## Current milestone: M1 (history loader, normalize, storage)
+## Current milestone: M2 (sortie segmenter + airfield resolution)
 
-## Done
-- KC-46A: adsb.lol types it `B762`; owner confirmed, now in the tanker family (military block only).
-- A release tagged D loads only rows inside day D. 2025 releases carry pre-midnight rows
-  (negative `dt`) and leftover traces from up to a week earlier (~97% duplicate points,
-  double-counted coverage); dropped as `stray_rows` (42k on 2025-10-29). Verified one
-  partition per release on real data. 2025 tars put traces first, so no heatmap to skip.
-- Undecodable trace files are skipped and listed (`max_corrupt_traces: 50` per day). Three
-  days (2026-04-01, 04-30, 05-04) failed on one bad file each before this; reloaded after
-  the backfill: each still had one bad file (civil hexes 3c5d8f, 400fdb, 4aca72), so the
-  damage is in the source. No prod release: 2025-12-25, 2026-05-05..07, 2026-06-11.
-- 2026-04-30 is a thin source day (29.8k traces, coverage 44% of median); the coverage guard
-  must catch days like this.
-- M0: scaffold, config, CI, public repo (thumplik/OSINT-tanker-tracker).
-- M1 core: parsers, fleet filter, H3 cells, coverage counts, date-partitioned Parquet.
-- Parser verified on real dumps (readsb 3.16.15); `flags & 8` geometric altitude fixed.
-  Six real traces are ODbL regression fixtures (`tests/fixtures/real_2026-10-25/`).
-- Downloader streams `<tag>.tar.aa/.ab/...` through the rate limiter (prod pod, year-repo and
-  `-0tmp` fallbacks, retries, nothing written until a day reads cleanly).
-- Heatmap skip: 512-byte header probes find the `traces/` entry (handles PAX/GNU extended
-  headers); the stream stops after the `traces/` subtree. Tar layout varies by day: usually
-  heatmap → traces, but 2026-10-22 was acas → traces → heatmap. Both handled.
-- `--workers N`: process pool, each worker gets 1/N of every rate limit.
-- Registry is per day (`registry/date=…/`); a day resolves untyped hexes from that day and
-  earlier only (SPEC §11 updated). Untracked military types feed the registry without parsing.
-- 7-day real run (2026-10-20..26): 1.45M points, 501 aircraft, 45 MB (~6.4 MB/day, ~2.3 GB/yr).
-  Second run with the speedups gave identical output (row count + content hash).
-  Weekday tankers 144–159, weekend 57–61.
+## M1 done
+- 12-month backfill (2025-10-27..2026-10-26, ~11 h, 2.1 GB): 360 days, 65M points, 1,209
+  aircraft. Monthly mean distinct tankers/day 100–152. No prod release: 2025-12-25,
+  2026-05-05..07, 2026-06-11. 2026-04-30 is a thin source day (coverage 44% of median).
+- KC-46A is typed `B762` by adsb.lol: 106 hexes in a year vs ~105 delivered. In the tanker family.
+- Releases load only rows inside their own UTC day (2025 releases carry pre-midnight rows and
+  leftover traces). Corrupt trace files are skipped and listed (≤ 50 per day; three days had
+  one each, in the source). Heatmap skip, `--workers N`, per-day registry (SPEC §11).
 
-## Timing
-- 7 days in ~900 s with 4 or 6 workers: download-bound at ~21 MB/s total, not CPU.
-  A 12-month backfill is ~13 h; run overnight with `--skip-existing` so it can resume.
-
-## Next
-- 12-month backfill done (2025-10-27..2026-10-26, ~11 h, 2.1 GB): 360 days, 65M points,
-  1,209 aircraft. Monthly mean distinct tankers/day 100–152. Owner: skim counts, then M1 done.
-- M2: track segmenter + airfield resolution (OurAirports CSV). readsb flag bit 2 marks a new
-  leg; consider carrying it on points (SPEC §5 change).
+## M2 plan (approved 2026-10-27)
+- Sortie rules, thresholds in `detectors.yaml` → `sortie:`:
+  - Starts at the first airborne point.
+  - Landing = ground run ≥ 60 s.
+  - A gap > 30 min ends the sortie unless both sides are ≥ 10,000 ft, the gap is ≤ 6 h and the
+    implied speed is ≤ 600 kt (owner chose bridging: 397 high gaps in 3 Sept days).
+- Origin/destination: nearest airfield ≤ 10 km while AGL < 3,000 ft, including the ground point
+  next to takeoff/landing. Null if first/last seen high.
+- `sorties/date=D/` = sorties with a point in D, built from points of D−1 and D only.
+  Airborne at end of D → `is_open`, closed by D+1 under the same `sortie_id`.
+- Schema: `type` + `families[]` replace `type_family`; orbit fields null until M6.
+- Airfields: `tw airfields update` pulls OurAirports (runway ≥ 3,000 ft) → `config/airfields.csv`,
+  indexed by H3 r5.
+- CLI: `build-sorties`, `sortie-stats` (resolution % + top unresolved cells).
+- Done when ≥ 90% of closed sorties in 2026-09-01..28 have both ends; then build the full year.
 
 ## Open questions
-- Parallel backfill is order-dependent for untyped hexes: if day D loads before D-1, D cannot
-  use D-1's registry. Sequential re-run of affected days would fix it; measure impact first.
-- Prod pod is missing some days (353 in 2025). Keep prod-only unless gaps hurt baselines.
+- Parallel backfill is order-dependent for untyped hexes (day D loaded before D−1 can't use
+  D−1's registry). Measure impact before re-running sequentially.
 - Region polygons in `regions.yaml` are coarse boxes. Refine before promoting any region.
 - Worker host (VPS vs Pi) and X account name are still open (SPEC §15).
