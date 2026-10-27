@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 import tarfile
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -25,12 +26,31 @@ class LoadSummary:
     military_points: int
     kept_points: int
     points_per_day: dict[date, int]
+    stray_traces: int = 0  # traces dated another day, not loaded
+
+
+_TAG_DAY = re.compile(r"v(\d{4})\.(\d{2})\.(\d{2})-")
+
+
+def day_from_tag(tag: str) -> date | None:
+    """`v2025.10.27-planes-readsb-prod-0` -> 2025-10-27."""
+    m = _TAG_DAY.match(tag)
+    return date(int(m[1]), int(m[2]), int(m[3])) if m else None
 
 
 def load_docs(
-    docs: Iterable[dict[str, Any]], data_dir: Path, fleet: Fleet, part: str
+    docs: Iterable[dict[str, Any]],
+    data_dir: Path,
+    fleet: Fleet,
+    part: str,
+    day: date | None = None,
 ) -> LoadSummary:
     """Parse trace documents, write points and coverage partitions.
+
+    A dump holds one UTC day: `day`, or the first trace's day when not given. Releases also
+    carry a few leftover traces dated earlier days, mostly duplicates of points already in
+    those days' own releases; they are counted in `stray_traces` and not loaded, so each
+    release writes exactly one day.
 
     Re-loading the same dump replaces its part files, so loads are idempotent. Nothing is
     written until the whole dump has been read, so a failed download leaves no partial day.
@@ -40,16 +60,19 @@ def load_docs(
     candidates: list[RawPoint] = []
     observed: dict[str, str] = {}  # hex -> type seen in this dump
     tracked = fleet.tracked_types
-    dump_day: date | None = None
-    traces = 0
+    traces = stray = 0
     # One pass: coverage sees every aircraft; only military-block traces become points.
     for doc in docs:
         icao, base, rows = doc.get("icao"), doc.get("timestamp"), doc.get("trace") or []
         if not isinstance(icao, str) or not isinstance(base, int | float):
             continue
+        doc_day = datetime.fromtimestamp(base, tz=UTC).date()
+        if day is None:
+            day = doc_day
+        if doc_day != day:
+            stray += 1
+            continue
         traces += 1
-        if dump_day is None:
-            dump_day = datetime.fromtimestamp(base, tz=UTC).date()
         hex_code, non_icao = clean_hex(icao)
         coverage.add_trace_rows(icao.lower(), float(base), rows)  # keep "~" distinct
         if non_icao or not fleet.in_military_block(hex_code):
@@ -61,8 +84,7 @@ def load_docs(
         if type_code is None or type_code in tracked:
             candidates.extend(parse_trace(doc))
 
-    # A dump holds one UTC day; resolve types from that day and earlier ones only (SPEC §11).
-    day = dump_day
+    # Resolve types from this day and earlier ones only (SPEC §11).
     registry = {**load_registry(data_dir, day), **observed} if day else observed
     points = list(normalize(candidates, fleet, registry))
     per_day = write_points(data_dir, points, part=part)
@@ -74,12 +96,14 @@ def load_docs(
         military_points=len(candidates),
         kept_points=len(points),
         points_per_day=per_day,
+        stray_traces=stray,
     )
 
 
 def load_dump(source: Path, data_dir: Path, fleet: Fleet, part: str | None = None) -> LoadSummary:
     """Load a local dump: a directory of trace files or a tar."""
-    return load_docs(iter_trace_docs(source), data_dir, fleet, part or source.name.split(".")[0])
+    name = source.name.split(".tar")[0]
+    return load_docs(iter_trace_docs(source), data_dir, fleet, part or name, day_from_tag(name))
 
 
 @dataclass(frozen=True)
@@ -108,7 +132,7 @@ def load_day(
         try:
             with io.BufferedReader(found.stream, buffer_size=1 << 20) as buffered:
                 docs = iter_trace_docs_from_stream(buffered)
-                summary = load_docs(docs, data_dir, fleet, found.tag)
+                summary = load_docs(docs, data_dir, fleet, found.tag, day)
             return DayResult(found.tag, found.skipped_bytes, summary)
         except (OSError, EOFError, tarfile.TarError):
             if attempt == cfg.max_attempts:

@@ -37,6 +37,7 @@ Rules:
 - Keep normalized points, sorties, baselines and alerts **forever** (see §11). Filtered to the tracked fleet, this is small: expect well under 1 GB per year in Parquet.
 - Backfill: load as far back as the history dumps allow (target 12+ months) so the historical view and backtests have depth from day one.
 - History dumps come from the `prod` pod releases only (`v<date>-planes-readsb-prod-0`). Pods are not mixed, because that could double-count aircraft and shift coverage. Releases are streamed, not stored, since any day can be re-downloaded. A day with no release is reported as missing and never treated as a day with zero activity.
+- A release tagged day D loads only traces dated D. Releases also carry a few leftover traces from earlier days (mostly duplicates of points in those days' own releases); they are counted and dropped so every day comes from exactly one release.
 - **Decided: personal, non-commercial project.** This keeps the free tiers usable. Re-check licensing before anything that earns money (including ads, subscriptions or X creator revenue). Alerts publish derived aggregates only, never raw feeds.
 - Home feeder: deferred (see §15). Not required for v1; the provider adapter must work without one.
 

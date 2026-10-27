@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import sys
 import time
@@ -25,7 +26,7 @@ def _data_dir() -> Path:
 def _print_summary(label: str, summary: LoadSummary) -> None:
     print(
         f"{label}: traces={summary.traces} military_points={summary.military_points} "
-        f"kept={summary.kept_points}"
+        f"kept={summary.kept_points} stray={summary.stray_traces}"
     )
     for day, n in summary.points_per_day.items():
         print(f"  {day.isoformat()}  {n} points")
@@ -150,6 +151,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(line_buffering=True)  # progress shows up in redirected logs
     return int(args.func(args))
 
 
