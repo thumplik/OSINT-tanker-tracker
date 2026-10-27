@@ -12,7 +12,10 @@ _Last updated: 2026-10-27_
   partition per release on real data. 2025 tars put traces first, so no heatmap to skip.
 - Undecodable trace files are skipped and listed (`max_corrupt_traces: 50` per day). Three
   days (2026-04-01, 04-30, 05-04) failed on one bad file each before this; reloaded after
-  the backfill. No prod release: 2025-12-25, 2026-05-05..07, 2026-06-11.
+  the backfill: each still had one bad file (civil hexes 3c5d8f, 400fdb, 4aca72), so the
+  damage is in the source. No prod release: 2025-12-25, 2026-05-05..07, 2026-06-11.
+- 2026-04-30 is a thin source day (29.8k traces, coverage 44% of median); the coverage guard
+  must catch days like this.
 - M0: scaffold, config, CI, public repo (thumplik/OSINT-tanker-tracker).
 - M1 core: parsers, fleet filter, H3 cells, coverage counts, date-partitioned Parquet.
 - Parser verified on real dumps (readsb 3.16.15); `flags & 8` geometric altitude fixed.
@@ -34,9 +37,8 @@ _Last updated: 2026-10-27_
   A 12-month backfill is ~13 h; run overnight with `--skip-existing` so it can resume.
 
 ## Next
-- 12-month backfill (2025-10-27..2026-10-26) started 2026-10-27 into `./data`, 4 workers,
-  log at `data/backfill.log`. Resume with the same command plus `--skip-existing`. When done:
-  review `tw stats` across weeks, list missing days → M1 done.
+- 12-month backfill done (2025-10-27..2026-10-26, ~11 h, 2.1 GB): 360 days, 65M points,
+  1,209 aircraft. Monthly mean distinct tankers/day 100–152. Owner: skim counts, then M1 done.
 - M2: track segmenter + airfield resolution (OurAirports CSV). readsb flag bit 2 marks a new
   leg; consider carrying it on points (SPEC §5 change).
 
