@@ -5,6 +5,7 @@ _Last updated: 2026-10-27_
 ## Current milestone: M1 (history loader, normalize, storage)
 
 ## Done
+- KC-46A: adsb.lol types it `B762`; owner confirmed, now in the tanker family (military block only).
 - M0: scaffold, config, CI, public repo (thumplik/OSINT-tanker-tracker).
 - M1 core: parsers, fleet filter, H3 cells, coverage counts, date-partitioned Parquet.
 - Parser verified on real dumps (readsb 3.16.15); `flags & 8` geometric altitude fixed.
@@ -26,13 +27,13 @@ _Last updated: 2026-10-27_
   A 12-month backfill is ~13 h; run overnight with `--skip-existing` so it can resume.
 
 ## Next
-- Owner: run the 12-month backfill, then review `tw stats` across weeks → M1 done.
+- 12-month backfill (2025-10-27..2026-10-26) started 2026-10-27 into `./data`, 4 workers,
+  log at `data/backfill.log`. Resume with the same command plus `--skip-existing`. When done:
+  review `tw stats` across weeks, list missing days → M1 done.
 - M2: track segmenter + airfield resolution (OurAirports CSV). readsb flag bit 2 marks a new
   leg; consider carrying it on points (SPEC §5 change).
 
 ## Open questions
-- **KC-46 type code.** No `KC46` seen; 12+ military hexes typed `B762`, very likely KC-46A.
-  Confirm and add to the tanker family in `fleet.yaml`. Waiting on owner.
 - Parallel backfill is order-dependent for untyped hexes: if day D loads before D-1, D cannot
   use D-1's registry. Sequential re-run of affected days would fix it; measure impact first.
 - Prod pod is missing some days (353 in 2025). Keep prod-only unless gaps hurt baselines.
