@@ -6,7 +6,7 @@ import io
 import re
 import tarfile
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -27,6 +27,7 @@ class LoadSummary:
     kept_points: int
     points_per_day: dict[date, int]
     stray_rows: int = 0  # trace rows outside the dump's day, not loaded
+    corrupt_traces: tuple[str, ...] = ()  # trace files that did not decode, skipped
 
 
 _TAG_DAY = re.compile(r"v(\d{4})\.(\d{2})\.(\d{2})-")
@@ -136,15 +137,25 @@ def load_day(
     """Stream one day's release from adsb.lol and load it. Returns None if no release exists.
 
     A failed stream is retried from the start; nothing is written until a full read succeeds.
+    Trace files that do not decode are skipped and listed, up to `cfg.max_corrupt_traces`;
+    beyond that the day fails (ValueError) without writing anything.
     """
     for attempt in range(1, cfg.max_attempts + 1):
         found = open_day(day, cfg, opener, limiter)
         if found is None:
             return None
+        corrupt: list[str] = []
+
+        def on_corrupt(name: str, corrupt: list[str] = corrupt, tag: str = found.tag) -> None:
+            corrupt.append(name)
+            if len(corrupt) > cfg.max_corrupt_traces:
+                raise ValueError(f"{len(corrupt)} corrupt trace files in {tag}")
+
         try:
             with io.BufferedReader(found.stream, buffer_size=1 << 20) as buffered:
-                docs = iter_trace_docs_from_stream(buffered)
+                docs = iter_trace_docs_from_stream(buffered, on_corrupt)
                 summary = load_docs(docs, data_dir, fleet, found.tag, day)
+            summary = replace(summary, corrupt_traces=tuple(corrupt))
             return DayResult(found.tag, found.skipped_bytes, summary)
         except (OSError, EOFError, tarfile.TarError):
             if attempt == cfg.max_attempts:

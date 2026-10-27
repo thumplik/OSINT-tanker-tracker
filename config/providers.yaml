@@ -30,3 +30,5 @@ history:
   # Skip the ~800 MB ./heatmap prefix of each tar by walking tar headers with range requests.
   skip_heatmap: true
   max_header_probes: 200
+  # Undecodable trace files are skipped and listed; more than this many fails the day.
+  max_corrupt_traces: 50

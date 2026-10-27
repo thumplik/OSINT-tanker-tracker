@@ -30,6 +30,8 @@ def _print_summary(label: str, summary: LoadSummary) -> None:
     )
     for day, n in summary.points_per_day.items():
         print(f"  {day.isoformat()}  {n} points")
+    for name in summary.corrupt_traces:
+        print(f"  skipped corrupt {name}")
 
 
 def _history_days(args: argparse.Namespace) -> list[date]:

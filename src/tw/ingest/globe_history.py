@@ -24,7 +24,8 @@ from __future__ import annotations
 import gzip
 import json
 import tarfile
-from collections.abc import Iterator
+import zlib
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Any
@@ -94,12 +95,21 @@ def _is_trace_member(name: str) -> bool:
     return Path(name).name.startswith("trace_full_")
 
 
+# A trace file that was read whole but does not decode (bad gzip, empty or invalid JSON).
+DECODE_ERRORS = (OSError, EOFError, zlib.error, ValueError)
+
+
 def iter_trace_docs_from_tar(
-    tar: tarfile.TarFile, stop_after_traces: bool = False
+    tar: tarfile.TarFile,
+    stop_after_traces: bool = False,
+    on_corrupt: Callable[[str], None] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Yield trace documents. With `stop_after_traces`, stop at the first member after the
     `traces/` subtree: tar writes a directory's subtree contiguously, so nothing is missed and a
-    stream does not have to read the heatmap files that sometimes follow it."""
+    stream does not have to read the heatmap files that sometimes follow it.
+
+    With `on_corrupt`, a member that does not decode is reported by name and skipped (real
+    releases hold the odd broken file); without it, the error is raised."""
     in_traces = False
     for member in tar:
         if member.name.removeprefix("./").startswith("traces"):
@@ -109,14 +119,25 @@ def iter_trace_docs_from_tar(
         if not member.isfile() or not _is_trace_member(member.name):
             continue
         fh = tar.extractfile(member)
-        if fh is not None:
-            yield decode_bytes(fh.read())
+        if fh is None:
+            continue
+        data = fh.read()  # a truncated stream raises here, never in decode
+        try:
+            doc = decode_bytes(data)
+        except DECODE_ERRORS:
+            if on_corrupt is None:
+                raise
+            on_corrupt(member.name)
+            continue
+        yield doc
 
 
-def iter_trace_docs_from_stream(stream: IO[bytes]) -> Iterator[dict[str, Any]]:
+def iter_trace_docs_from_stream(
+    stream: IO[bytes], on_corrupt: Callable[[str], None] | None = None
+) -> Iterator[dict[str, Any]]:
     """Read a tar from a non-seekable stream (e.g. concatenated HTTP parts) in one pass."""
     with tarfile.open(fileobj=stream, mode="r|*") as tar:
-        yield from iter_trace_docs_from_tar(tar, stop_after_traces=True)
+        yield from iter_trace_docs_from_tar(tar, stop_after_traces=True, on_corrupt=on_corrupt)
 
 
 def iter_trace_docs(path: Path) -> Iterator[dict[str, Any]]:

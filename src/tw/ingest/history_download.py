@@ -60,6 +60,7 @@ class HistoryConfig:
     user_agent: str
     skip_heatmap: bool = True
     max_header_probes: int = 200
+    max_corrupt_traces: int = 50
 
     @classmethod
     def load(cls) -> HistoryConfig:
@@ -75,6 +76,7 @@ class HistoryConfig:
             user_agent=raw["user_agent"],
             skip_heatmap=bool(raw.get("skip_heatmap", True)),
             max_header_probes=int(raw.get("max_header_probes", 200)),
+            max_corrupt_traces=int(raw.get("max_corrupt_traces", 50)),
         )
 
     def candidates(self, day: date) -> Iterator[tuple[str, str]]:

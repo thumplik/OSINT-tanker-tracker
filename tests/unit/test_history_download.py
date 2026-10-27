@@ -181,3 +181,47 @@ def test_truncated_stream_is_retried_then_raises(tmp_path, fixtures):
         load_day(date(2026, 10, 25), tmp_path, load_fleet(), CFG, opener, CountingLimiter())
     assert sum(u.endswith(".tar.aa") for u in requested) == CFG.max_attempts
     assert not (tmp_path / "points").exists()  # nothing written from a failed read
+
+
+def _release_with_corrupt(tmp_path, fixtures, corrupt: dict[str, bytes]) -> dict[str, bytes]:
+    """The real fixture traces plus `corrupt` trace files (name -> bytes)."""
+    src = tmp_path / "src"
+    for f in (fixtures / "real_2026-10-25").rglob("trace_full_*"):
+        dest = src / f.parent.name / f.name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(f.read_bytes())
+    for name, data in corrupt.items():
+        (src / "zz").mkdir(parents=True, exist_ok=True)
+        (src / "zz" / name).write_bytes(data)
+    tag = "v2026.10.25-planes-readsb-prod-0"
+    return split_release("adsblol/globe_history_2026", tag, build_tar(src), size=10**9)
+
+
+def test_corrupt_trace_file_is_skipped_and_counted(tmp_path, fixtures):
+    """Seen in real releases (2026-04-01, 04-30, 05-04): one bad gzip or empty JSON member
+    must not lose the other ~70k traces of the day."""
+    files = _release_with_corrupt(
+        tmp_path, fixtures, {"trace_full_ae00zz.json": b"\x1f\x8b\x08\x00garbage"}
+    )
+    opener, _ = fake_server(files)
+    result = load_day(
+        date(2026, 10, 25), tmp_path / "data", load_fleet(), CFG, opener, CountingLimiter()
+    )
+    assert result is not None
+    assert result.summary.traces == 6
+    assert result.summary.corrupt_traces == ("./traces/zz/trace_full_ae00zz.json",)
+    rows = read_day(tmp_path / "data", "points", date(2026, 10, 25)).num_rows
+    assert rows == 1523 + 1310 + 549
+
+
+def test_too_many_corrupt_trace_files_fails_the_day(tmp_path, fixtures):
+    limit = 2
+    bad = {f"trace_full_ae00{i:02d}.json": b"" for i in range(limit + 1)}
+    files = _release_with_corrupt(tmp_path, fixtures, bad)
+    opener, _ = fake_server(files)
+    cfg = HistoryConfig(**{**CFG.__dict__, "max_corrupt_traces": limit})
+    with pytest.raises(ValueError, match="corrupt"):
+        load_day(
+            date(2026, 10, 25), tmp_path / "data", load_fleet(), cfg, opener, CountingLimiter()
+        )
+    assert not (tmp_path / "data" / "points").exists()
