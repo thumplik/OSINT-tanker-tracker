@@ -55,6 +55,13 @@ class RateLimiter:
     def __init__(self, limits: dict[str, tuple[float, float]]) -> None:
         self._buckets = {name: TokenBucket(rate, cap) for name, (rate, cap) in limits.items()}
 
+    @classmethod
+    def from_config(cls) -> RateLimiter:
+        from tw.config import load_yaml
+
+        limits = load_yaml("providers.yaml")["rate_limits"]
+        return cls({name: (float(rate), float(cap)) for name, (rate, cap) in limits.items()})
+
     def acquire(self, provider: str) -> None:
         try:
             bucket = self._buckets[provider]

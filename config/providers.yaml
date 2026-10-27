@@ -12,3 +12,17 @@ attribution:
 # Coverage denominator (SPEC §5): count each aircraft at most once per this many seconds when
 # building per-cell hourly coverage. Keeps a full global day tractable.
 coverage_sample_seconds: 60
+
+# adsb.lol globe_history releases (SPEC §2). A day's release lives in the repo for its year or,
+# around New Year, the next year's repo. Tags: v<YYYY.MM.DD>-planes-readsb-<pod>-<suffix>.
+# Assets are a plain tar split into parts: <tag>.tar.aa, <tag>.tar.ab, ...
+# Only the prod pod is used: mixing pods could double-count aircraft and shift coverage.
+history:
+  base_url: "https://github.com"
+  org: adsblol
+  repo_prefix: globe_history_
+  pods: [prod]
+  tag_suffixes: ["0", "0tmp"]
+  timeout_s: 60
+  max_attempts: 3
+  user_agent: "tanker-watch/0.1 (+https://github.com/thumplik/OSINT-tanker-tracker)"

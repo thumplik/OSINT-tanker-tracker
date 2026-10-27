@@ -2,37 +2,41 @@
 
 _Last updated: 2026-10-26_
 
-## Current milestone: M0 (scaffold) + start of M1 (history loader, normalize, storage)
-
-### Plan (written before coding)
-1. M0: `pyproject.toml` (uv, Python 3.12), `src/tw` package layout per CLAUDE.md, ruff + mypy
-   (strict on `detectors/`, `publisher/`), pytest, GitHub Actions CI, `.env.example`, `.gitignore`.
-2. M0: config files: `fleet.yaml`, `regions.yaml` (all `watch`), `detectors.yaml`,
-   `known_events.yaml`, `post_language.yaml`, `publisher.yaml` (`auto_post: false`).
-   Typed loader in `tw/config.py` with a stable config hash (SPEC §11).
-3. M1: `ingest/ratelimit.py` token bucket (injectable clock, testable without sleeping).
-4. M1: parsers for ADSBx v2 `/v2` responses and readsb `globe_history` trace files → raw points.
-5. M1: `normalize/`: hex-block + type-family filter, registry resolution for type-less hexes,
-   `position_source` kept on every point, H3 r4/r6 (null when no position, never "on ground").
-6. M1: `store/`: points + coverage written to `date=YYYY-MM-DD` Parquet partitions; reads touch one partition.
-7. `tw load-history --path <dir|tar>` loads local dumps. Tests use synthetic fixtures only.
+## Current milestone: M1 (history loader, normalize, storage)
 
 ## Done
-- All of the plan above, plus `tw stats --date` and a public repo with README, MIT license, CI.
-- 21 tests pass on synthetic fixtures; ruff and mypy are clean.
+- M0: scaffold, config, CI, public repo (thumplik/OSINT-tanker-tracker).
+- M1 core: parsers, fleet filter + registry, H3 cells, coverage counts, date-partitioned Parquet.
+- Parser checked against a real dump (`v2026.10.25-planes-readsb-prod-0`, readsb 3.16.15).
+  Confirmed: 14-field rows, gzip members, `details.flight` callsigns, `~` non-ICAO traces,
+  `dt` always in [0, 86400) (a dump is exactly one UTC day, no midnight spill).
+  Fixed: `flags & 8` means the altitude is geometric, so it no longer lands in `alt_baro`.
+  Six real trace files are now regression fixtures (`tests/fixtures/real_2026-10-25/`, ODbL).
+- Downloader (`ingest/history_download.py`): streams `<tag>.tar.aa`, `.ab`, ... through the rate
+  limiter straight into the loader. It tries the day's year repo, then the next year's (releases
+  around New Year live there), with suffixes `-0` and then `-0tmp`. Prod pod only (SPEC §2).
+  Retries a failed stream; nothing is written until a whole day reads cleanly.
+- `tw load-history --days N | --from D [--to D] | --path P [--skip-existing]`.
+- Full real day 2026-10-25 streamed + loaded in 3 min (67,333 traces → 106,676 points, 4.3 MB):
+  C17 43, C30J 36, K35R 21, C5M 9, C130 1 aircraft. K35R/C5M are ~91–96% MLAT and K35R had
+  no callsigns. Dumps only hold positioned rows, so Mode-S-only aircraft never appear.
 
 ## Next
-- M1: downloader for adsb.lol `globe_history` releases (through `ratelimit`), then load 12 months
-  and sanity-check per-family daily counts with `tw stats --date`.
-- M2: track segmenter + airfield resolution (OurAirports CSV).
+- Backfill 12 months (about 1.3 TB streamed; run on the worker box, not a laptop) and review
+  `tw stats` per-family counts across weeks. Then M1 is done.
+- Possible speedup: skip the ~800 MB heatmap prefix of each tar with range requests.
+- M2: track segmenter + airfield resolution (OurAirports CSV). Trace flag bit 2 marks the start
+  of a new leg in readsb; consider carrying it on points for the segmenter (SPEC §5 change).
 
 ## Open questions
-- The trace parser follows the readsb `trace_full` layout (row = `[dt, lat, lon, alt, gs, track,
-  flags, vrate, details, source, ...]`). Fixtures are synthetic; **verify against a real dump**
-  before trusting M1 counts.
-- Region polygons in `regions.yaml` are coarse lat/lon boxes. Refine before any region is promoted.
-- Traces spill past midnight, so day N's dump also writes into day N+1. Is that overlap
-  duplicated by day N+1's own dump? Dedupe on (hex, ts) at read time or at load.
+- **KC-46 type code.** No `KC46` appeared on 2026-10-25, but 12 military-block hexes are typed
+  `B762`, very likely KC-46A. Confirm (e.g. from registry `desc`) and add B762 to the tanker
+  family in `fleet.yaml`, which would change tanker counts. Waiting on owner.
 - The registry (hex → type) is global, so a later load can change which points an earlier day
-  would keep. Store the registry as dated snapshots too, for SPEC §11?
+  keeps. Store dated registry snapshots for SPEC §11?
+- About 16% of tracked-type traces in the sample had no `t`; the registry fills them only
+  after that hex has been seen with a type on some day.
+- Prod is missing some days (e.g. 353 prod releases for 2025). Staging could fill gaps, but
+  mixing pods is untested. Keep prod-only unless gaps hurt baselines.
+- Region polygons in `regions.yaml` are coarse boxes. Refine before promoting any region.
 - Worker host (VPS vs Pi) and X account name are still open (SPEC §15).

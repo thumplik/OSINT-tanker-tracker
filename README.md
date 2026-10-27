@@ -82,11 +82,19 @@ uv sync
 uv run pytest
 ```
 
-Load a `globe_history` dump (a folder of `trace_full_*.json` files or a `.tar`) and check the counts:
+Load history from [adsb.lol](https://github.com/adsblol) and check the counts. Each day is a
+~3.5 GB release that is streamed and filtered on the fly, so it is never stored on disk:
 
 ```bash
-uv run tw load-history --path tests/fixtures/globe_history_2026-07-01
-uv run tw stats --date 2026-07-01
+uv run tw load-history --days 7 --skip-existing      # last 7 complete UTC days
+uv run tw load-history --from 2026-10-01 --to 2026-10-25
+uv run tw stats --date 2026-10-25
+```
+
+Or load a local dump (a folder of `trace_full_*.json` files or a `.tar`):
+
+```bash
+uv run tw load-history --path tests/fixtures/real_2026-10-25
 ```
 
 Data goes to `./data` by default. Set `TW_DATA_DIR` to change it (see [`.env.example`](.env.example)).
@@ -95,7 +103,8 @@ Data goes to `./data` by default. Set `TW_DATA_DIR` to change it (see [`.env.exa
 
 | Command | Status | What it does |
 |---|---|---|
-| `tw load-history --path <dir\|tar>` | ✅ | Parse dumps, filter to the fleet, write date-partitioned points and coverage |
+| `tw load-history --days N` / `--from D --to D` | ✅ | Stream adsb.lol daily releases (rate-limited), filter to the fleet, write date-partitioned points and coverage |
+| `tw load-history --path <dir\|tar>` | ✅ | Same, from a local dump |
 | `tw stats --date YYYY-MM-DD` | ✅ | Count aircraft per family for one UTC day |
 | `tw replay`, `tw backtest` | M3 | Offline full pipeline and backtest report |
 | `tw worker` | M4 | Live ingest and detection |
@@ -105,7 +114,8 @@ Data goes to `./data` by default. Set `TW_DATA_DIR` to change it (see [`.env.exa
 
 ```
 src/tw/
-  ingest/        provider parsers (ADSBx v2, globe_history traces), rate limiter, loader
+  ingest/        provider parsers (ADSBx v2, globe_history traces), rate limiter,
+                 history downloader, loader
   normalize/     hex block + type family filter, registry resolution, H3 cells, coverage
   store/         date-partitioned Parquet (DuckDB reads one partition per day)
   tracks/        sortie segmentation, airfields, orbits          (M2)

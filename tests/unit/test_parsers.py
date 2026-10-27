@@ -34,11 +34,42 @@ def test_v2_requires_now():
 def test_trace_parse_including_gzip(fixtures):
     points = list(iter_points(fixtures / "globe_history_2026-07-01"))
     tanker = [p for p in points if p.hex == "ae1234"]
-    assert len(tanker) == 4
+    assert len(tanker) == 5
     assert all(p.callsign == "PACK21" for p in tanker)  # carried forward from details
     assert tanker[0].on_ground is True and tanker[0].alt_baro is None
     assert tanker[1].alt_baro == 12000 and tanker[1].on_ground is False
-    # Missing altitude is unknown, never "on the ground".
-    assert tanker[3].alt_baro is None and tanker[3].on_ground is None
     assert tanker[2].position_source == "mlat"
-    assert tanker[3].ts.date().isoformat() == "2026-07-02"
+    # flags & 8: altitude is geometric, so no baro altitude, but the aircraft is airborne.
+    assert tanker[3].alt_baro is None and tanker[3].on_ground is False
+    # Missing altitude is unknown, never "on the ground".
+    assert tanker[4].alt_baro is None and tanker[4].on_ground is None
+
+
+def test_real_dump_traces(fixtures):
+    """Regression on real adsb.lol traces. Expected values were counted from the raw JSON."""
+    points = list(iter_points(fixtures / "real_2026-10-25"))
+    by_hex: dict[str, list] = {}
+    for p in points:
+        by_hex.setdefault(p.hex, []).append(p)
+
+    assert {h: len(v) for h, v in by_hex.items()} == {
+        "a99d05": 22,
+        "ae29da": 1310,
+        "ae07f0": 1523,
+        "ae4ff0": 441,
+        "ae5df0": 549,
+        "2b7bf0": 21,
+    }
+    c17 = by_hex["ae07f0"]
+    assert {p.type for p in c17} == {"C17"}
+    assert sum(p.on_ground is True for p in c17) == 219
+    assert {p.callsign for p in c17} == {"RCH3262"}
+    assert c17[0].ts == datetime(2026, 10, 25, 13, 5, 47, 770000, tzinfo=UTC)
+    assert all(p.ts.date().isoformat() == "2026-10-25" for p in points)
+
+    hercules = by_hex["ae29da"]
+    assert {p.position_source for p in hercules} == {"mlat"}
+    assert hercules[0].gs is None and hercules[0].track is None
+
+    assert all(p.is_non_icao for p in by_hex["2b7bf0"])
+    assert all(not p.is_non_icao for h, v in by_hex.items() if h != "2b7bf0" for p in v)
