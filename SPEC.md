@@ -106,8 +106,8 @@ providers ──▶ ingest worker ──▶ raw store (JSONL.gz)
 **Sortie**:
 - Starts at first airborne point; ends at landing (a ground run of ≥ 60 s; shorter is a touch-and-go) or a gap > 30 min. A missing ground flag is never a landing.
 - A longer gap is a coverage hole, not a landing, and does not end the sortie when the aircraft is ≥ 10,000 ft on both sides, the gap is ≤ 6 h, and the implied speed is ≤ 600 kt (decided Oct 2026: real data has hundreds of such gaps per week over oceans and receiver holes).
-- `origin_icao` / `dest_icao`: nearest airfield within 10 km of the first (last) point below 3,000 ft AGL, including the ground point next to takeoff (landing); `null` if unresolved or first (last) seen above that height. ICAO code where one exists, else the OurAirports ident. Airfields: OurAirports, runway ≥ 3,000 ft (`config/airfields.csv`, `tw airfields update`).
-- Fields: `sortie_id, hex, type, families[], callsign, start_ts, end_ts, origin_icao, dest_icao, start/end lat-lon, h3_cells[], max_alt, n_points, low_quality_share, end_reason, is_open, start_truncated, is_orbit, orbit_hours`. `families[]` replaces a single family because C30J is in two. Orbit fields are filled by D3 (M6).
+- `origin_icao` / `dest_icao`: nearest airfield within 15 km of the first (last) point below 4,000 ft AGL (chosen from a sweep, Oct 2026; was 10 km / 3,000 ft), including the ground point next to takeoff (landing); `null` if unresolved or first (last) seen above that height. ICAO code where one exists, else the OurAirports ident. Airfields: OurAirports, runway ≥ 3,000 ft (`config/airfields.csv`, `tw airfields update`).
+- Fields: `sortie_id, hex, type, families[], callsign, start_ts, end_ts, origin_icao, dest_icao, start/end lat-lon, h3_cells[], max_alt, n_points, low_quality_share, start_seen_low, end_seen_low, end_reason, is_open, start_truncated, is_orbit, orbit_hours`. `families[]` replaces a single family because C30J is in two. Orbit fields are filled by D3 (M6).
 - `sorties/date=D/` holds every sortie with a point in D, built from points of D and the day before only (never later days). A sortie still airborne at the end of D is stored open, with no destination, and the next day's build closes it under the same `sortie_id`. Multi-day counts dedupe by `sortie_id`, latest partition ≤ as_of.
 - All thresholds are in `config/detectors.yaml` → `sortie:`.
 
@@ -277,7 +277,7 @@ Rules for every ML stage:
 |---|---|---|
 | M0 | Repo scaffold, config files, CI, CLAUDE.md | `uv run pytest` passes; lint clean |
 | M1 | Historical loader + normalize/filter, date-partitioned storage | 12 months of history loaded; per-family counts look sane |
-| M2 | Track segmenter + airfield resolution | ≥ 90% of sorties in sample get an origin and destination |
+| M2 | Track segmenter + airfield resolution | ≥ 90% of origins and destinations seen low (on the ground or < 5,000 ft AGL) resolve to an airfield. Ends first/last seen at altitude are coverage edges and are reported, not counted (decided Oct 2026) |
 | M3 | Baselines + D1, D2 + coverage guard | Backtest report generated |
 | M4 | Live ingest worker | Runs 72h unattended; rate limits respected |
 | M5 | Dashboard (heat map, alert feed) with date picker | Usable on desktop and phone; any backfilled day loads in < 1 s |

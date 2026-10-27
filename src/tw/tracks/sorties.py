@@ -19,7 +19,14 @@ from typing import Any
 from tw.config import Fleet
 from tw.store.parquet import SORTIE_SCHEMA, read_day, write_partition
 from tw.tracks.airfields import AirfieldIndex
-from tw.tracks.segment import RawSortie, SortieRules, TrackPoint, resolve_ends, segment
+from tw.tracks.segment import (
+    RawSortie,
+    SortieRules,
+    TrackPoint,
+    resolve_ends,
+    seen_low,
+    segment,
+)
 
 PART = "sorties"
 
@@ -74,6 +81,7 @@ def _row(
     raw: RawSortie,
     fleet: Fleet,
     ends: tuple[str | None, str | None],
+    low: tuple[bool, bool],
     is_open: bool,
     truncated: bool,
 ) -> dict[str, Any]:
@@ -101,6 +109,8 @@ def _row(
         "max_alt": max(alts) if alts else None,
         "n_points": len(airborne),
         "low_quality_share": sum(p.low_quality for p in airborne) / len(airborne),
+        "start_seen_low": low[0],
+        "end_seen_low": low[1] and not is_open,
         "end_reason": "open" if is_open else raw.end_reason,
         "is_open": is_open,
         "start_truncated": truncated,
@@ -132,8 +142,8 @@ def build_day(
             if raw.end_reason == "data_end" and not is_open:
                 raw = RawSortie(raw.points, raw.before, raw.after, "gap")
             truncated = raw.before is None and airborne[0].ts - window_start <= rules.max_gap_s
-            ends = resolve_ends(raw, index, rules)
-            rows.append(_row(hex_code, types[hex_code], raw, fleet, ends, is_open, truncated))
+            ends, low = resolve_ends(raw, index, rules), seen_low(raw, index, rules)
+            rows.append(_row(hex_code, types[hex_code], raw, fleet, ends, low, is_open, truncated))
     rows.sort(key=lambda r: (r["start_ts"], r["hex"]))
     write_partition(data_dir, "sorties", day, rows, SORTIE_SCHEMA, PART)
     closed = [r for r in rows if not r["is_open"]]
@@ -186,33 +196,49 @@ def resolution_report(
 ) -> list[str]:
     closed = [r for r in rows if not r["is_open"]]
 
+    def low_share(group: Sequence[dict[str, Any]]) -> str:
+        """M2 target: origins (destinations) resolved among starts (ends) seen low."""
+        parts = []
+        for seen, key in (("start_seen_low", "origin_icao"), ("end_seen_low", "dest_icao")):
+            low = [r for r in group if r[seen]]
+            hit = sum(1 for r in low if r[key])
+            parts.append(f"{hit / len(low):6.1%} of {len(low):>5}" if low else "     - of     0")
+        return "   ".join(parts)
+
     def share(group: Sequence[dict[str, Any]]) -> str:
         both = sum(1 for r in group if r["origin_icao"] and r["dest_icao"])
         return f"{both / len(group):6.1%} of {len(group):>6}" if group else "     - of      0"
 
-    lines = [f"closed sorties with origin and destination: {share(closed)}"]
-    for label, key in (("origin", "origin_icao"), ("destination", "dest_icao")):
-        n = sum(1 for r in closed if r[key])
-        lines.append(f"  {label:<12} resolved {n / max(1, len(closed)):6.1%}")
+    both_low = [r for r in closed if r["start_seen_low"] and r["end_seen_low"]]
+    lines = [
+        "M2 target: >= 90% of ends seen low get an airfield",
+        f"  {'':<18} {'origin':<16}   {'destination':<16}",
+        f"  {'all':<18} {low_share(closed)}",
+    ]
     families = sorted({f for r in closed for f in r["families"]})
-    lines.append("by family:")
-    lines += [f"  {f:<18} {share([r for r in closed if f in r['families']])}" for f in families]
+    lines += [f"  {f:<18} {low_share([r for r in closed if f in r['families']])}" for f in families]
+    lines.append(f"both ends, where both were seen low: {share(both_low)}")
+    lines.append(f"both ends, all closed sorties:       {share(closed)}")
+    seen = sum(r["start_seen_low"] for r in closed) + sum(r["end_seen_low"] for r in closed)
+    lines.append(
+        f"ends seen low: {seen / max(1, 2 * len(closed)):.0%} (the rest are coverage edges)"
+    )
     lines.append("by position quality:")
     mlat = [r for r in closed if r["low_quality_share"] >= 0.5]
     adsb = [r for r in closed if r["low_quality_share"] < 0.5]
-    lines.append(f"  {'mostly ADS-B':<18} {share(adsb)}")
-    lines.append(f"  {'mostly MLAT etc':<18} {share(mlat)}")
+    lines.append(f"  {'mostly ADS-B':<18} {low_share(adsb)}")
+    lines.append(f"  {'mostly MLAT etc':<18} {low_share(mlat)}")
     reasons = Counter(r["end_reason"] for r in closed)
     lines.append("end reasons: " + ", ".join(f"{k} {v}" for k, v in sorted(reasons.items())))
 
-    # Where unresolved ends cluster, with the nearest known field: finds missing airfields.
+    # Where ends seen low still go unresolved, with the nearest field: finds missing airfields.
     misses: Counter[tuple[float, float]] = Counter()
     for r in closed:
-        if not r["origin_icao"]:
+        if r["start_seen_low"] and not r["origin_icao"]:
             misses[(round(r["start_lat"], 1), round(r["start_lon"], 1))] += 1
-        if not r["dest_icao"]:
+        if r["end_seen_low"] and not r["dest_icao"]:
             misses[(round(r["end_lat"], 1), round(r["end_lon"], 1))] += 1
-    lines.append("top unresolved ends (0.1° bins; nearest field within 50 km):")
+    lines.append("top unresolved ends seen low (0.1° bins; nearest field within 50 km):")
     for (lat, lon), n in misses.most_common(top):
         hit = index.nearest(lat, lon, 50)
         near = f"{hit[0].code} {hit[0].name[:40]} {hit[1]:.0f} km" if hit else "none"

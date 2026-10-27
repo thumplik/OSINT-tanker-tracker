@@ -46,6 +46,8 @@ class SortieRules:
     min_duration_s: float
     airfield_radius_km: float
     airfield_max_agl_ft: int
+    seen_low_agl_ft: int
+    seen_low_field_radius_km: float
 
     @classmethod
     def from_config(cls, cfg: Mapping[str, Any]) -> SortieRules:
@@ -59,6 +61,8 @@ class SortieRules:
             min_duration_s=float(cfg["min_minutes"]) * 60,
             airfield_radius_km=float(cfg["airfield_radius_km"]),
             airfield_max_agl_ft=int(cfg["airfield_max_agl_ft"]),
+            seen_low_agl_ft=int(cfg["seen_low_agl_ft"]),
+            seen_low_field_radius_km=float(cfg["seen_low_field_radius_km"]),
         )
 
 
@@ -169,3 +173,23 @@ def resolve_ends(
     head: Sequence[TrackPoint] = ((sortie.before,) if sortie.before else ()) + sortie.points
     tail: Sequence[TrackPoint] = ((sortie.after,) if sortie.after else ()) + sortie.points[::-1]
     return _resolve(head, index, rules), _resolve(tail, index, rules)
+
+
+def _low(p: TrackPoint, ground_seen: bool, index: AirfieldIndex, rules: SortieRules) -> bool:
+    if ground_seen:
+        return True
+    if p.alt is None:
+        return False
+    hit = index.nearest(p.lat, p.lon, rules.seen_low_field_radius_km)
+    elevation = (hit[0].elevation_ft or 0.0) if hit is not None else 0.0
+    return p.alt - elevation < rules.seen_low_agl_ft
+
+
+def seen_low(sortie: RawSortie, index: AirfieldIndex, rules: SortieRules) -> tuple[bool, bool]:
+    """Whether the start (end) was seen low enough to name an airfield: on the ground, or
+    below `seen_low_agl_ft`. Ends first or last seen at altitude (coverage edges) are not."""
+    airborne = [p for p in sortie.points if p.on_ground is not True]
+    return (
+        _low(airborne[0], sortie.before is not None, index, rules),
+        _low(airborne[-1], sortie.after is not None, index, rules),
+    )

@@ -6,7 +6,7 @@ from tw.config import load_fleet, load_yaml
 from tw.store.parquet import POINT_SCHEMA, partition_dir, read_day, write_partition
 from tw.tracks.airfields import AirfieldIndex, load_airfields
 from tw.tracks.segment import SortieRules
-from tw.tracks.sorties import build_day
+from tw.tracks.sorties import build_day, resolution_report
 
 KIAB = (37.6219, -97.2682, 1371)
 KDOV = (39.1295, -75.4660, 24)
@@ -103,3 +103,17 @@ def test_sorties_ending_before_the_day_are_left_to_that_day(tmp_path, fixtures):
 def test_rebuild_is_identical(tmp_path, fixtures):
     store(tmp_path, flight_points(D, 600, 150) + flight_points(D, 900, 60, KDOV, KIAB, "ae0001"))
     assert build(tmp_path, D, fixtures) == build(tmp_path, D, fixtures)
+
+
+def test_ends_first_seen_high_are_not_counted_against_resolution(tmp_path, fixtures):
+    """M2 target counts only ends seen low; a flight that enters coverage at cruise has an
+    unresolvable origin, not a missed one."""
+    rows = [r for r in flight_points(D, 600, 150) if r["ts"] >= ts(D, 600 + 2 + 30)]
+    store(tmp_path, rows)
+    (s,) = build(tmp_path, D, fixtures)
+    assert s["origin_icao"] is None and not s["start_seen_low"]
+    assert s["dest_icao"] == "KDOV" and s["end_seen_low"]
+    report = "\n".join(
+        resolution_report([s], AirfieldIndex(load_airfields(fixtures / "airfields.csv")))
+    )
+    assert "     - of     0   100.0% of     1" in report

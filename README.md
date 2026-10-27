@@ -10,8 +10,8 @@ unusual, and drafts short posts for a human to review before anything is publish
 
 It reports **what** is unusual, never **why**.
 
-> 🚧 **Early development.** Milestone M0 (scaffold) is done and M1 (history loader) is in progress.
-> No detectors, dashboard or posting exist yet. See the [roadmap](#roadmap).
+> 🚧 **Early development.** M0–M2 are done: a year of history is loaded and split into sorties with
+> origin and destination airfields. No detectors, dashboard or posting exist yet. See the [roadmap](#roadmap).
 
 ---
 
@@ -84,7 +84,7 @@ uv run pytest
 
 Load history from [adsb.lol](https://github.com/adsblol) and check the counts. Each day is a
 ~3.5 GB release that is streamed and filtered on the fly; only the tracked fleet and coverage
-counts are kept, about 4.4 MB per day (~1.6 GB per year). The ~800 MB of heatmap files at the
+counts are kept, about 6 MB per day (~2 GB per year). The ~800 MB of heatmap files at the
 start of each release is skipped with range requests.
 
 ```bash
@@ -95,6 +95,15 @@ uv run tw stats --date 2026-10-25
 
 `--workers N` loads N days in parallel and splits every rate limit N ways, so the total request
 rate never exceeds `config/providers.yaml`. A stopped run resumes with `--skip-existing`.
+
+Split the loaded points into sorties (takeoff to landing, with origin and destination airfields)
+and check how many ends resolved:
+
+```bash
+uv run tw build-sorties --from 2025-10-27 --to 2026-10-26 --workers 6
+uv run tw sortie-stats --from 2026-09-01 --to 2026-09-28
+uv run tw airfields update        # refresh config/airfields.csv from OurAirports
+```
 
 Or load a local dump (a folder of `trace_full_*.json` files or a `.tar`):
 
@@ -111,6 +120,9 @@ Data goes to `./data` by default. Set `TW_DATA_DIR` to change it (see [`.env.exa
 | `tw load-history --days N` / `--from D --to D` `[--workers N]` | ✅ | Stream adsb.lol daily releases (rate-limited, in parallel), filter to the fleet, write date-partitioned points and coverage |
 | `tw load-history --path <dir\|tar>` | ✅ | Same, from a local dump |
 | `tw stats --date YYYY-MM-DD` | ✅ | Count aircraft per family for one UTC day |
+| `tw build-sorties --date D` / `--from D --to D` | ✅ | Build `sorties/date=D/` (from D and the day before only) |
+| `tw sortie-stats --from D --to D` | ✅ | Airfield resolution report, with unresolved hot spots |
+| `tw airfields update` | ✅ | Rebuild `config/airfields.csv` from OurAirports |
 | `tw replay`, `tw backtest` | M3 | Offline full pipeline and backtest report |
 | `tw worker` | M4 | Live ingest and detection |
 | `tw api` | M5 | Dashboard read API |
@@ -123,7 +135,7 @@ src/tw/
                  history downloader, loader
   normalize/     hex block + type family filter, registry resolution, H3 cells, coverage
   store/         date-partitioned Parquet (DuckDB reads one partition per day)
-  tracks/        sortie segmentation, airfields, orbits          (M2)
+  tracks/        sortie segmentation, airfield resolution; orbits in M6
   baselines/     nightly median/MAD snapshots                     (M3)
   detectors/     D1–D5, guards, composite scoring. Pure functions (M3, M6)
   publisher/     templates, validator, charts, approval-gated X client (M7)
@@ -139,8 +151,8 @@ web/             dashboard (React + MapLibre + deck.gl, on Vercel)
 | | Milestone | Done when |
 |---|---|---|
 | ✅ | **M0** Scaffold, config, CI | Tests and lint pass |
-| 🚧 | **M1** Historical loader, normalize, partitioned storage | 12 months loaded, counts look sane |
-| ⬜ | **M2** Sortie segmenter and airfield resolution | ≥ 90% of sorties get an origin and destination |
+| ✅ | **M1** Historical loader, normalize, partitioned storage | 12 months loaded, counts look sane |
+| ✅ | **M2** Sortie segmenter and airfield resolution | ≥ 90% of ends seen low resolve to an airfield |
 | ⬜ | **M3** Baselines, D1, D2 and the coverage guard | Backtest report generated |
 | ⬜ | **M4** Live ingest worker | Runs 72h unattended within rate limits |
 | ⬜ | **M5** Dashboard with heat map, alert feed and date picker | Any day loads in < 1 s |

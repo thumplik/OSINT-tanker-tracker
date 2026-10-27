@@ -62,6 +62,8 @@ SORTIE_SCHEMA = pa.schema(
         ("max_alt", pa.int32()),
         ("n_points", pa.int32()),
         ("low_quality_share", pa.float64()),
+        ("start_seen_low", pa.bool_()),
+        ("end_seen_low", pa.bool_()),
         ("end_reason", pa.string()),
         ("is_open", pa.bool_()),
         ("start_truncated", pa.bool_()),

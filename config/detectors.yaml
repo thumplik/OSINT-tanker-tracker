@@ -15,8 +15,14 @@ sortie:
   bridge_max_speed_kt: 600      # great-circle distance / gap duration
   min_points: 5                 # shorter sorties are noise and are dropped (and counted)
   min_minutes: 5
-  airfield_radius_km: 10
-  airfield_max_agl_ft: 3000
+  # 15 km / 4,000 ft chosen from a sweep on 7 days of Sept 2026 (handoff.md, SPEC §5): on a 3°
+  # approach an aircraft 15 km out is ~2,600 ft up, and MLAT often loses it below that.
+  airfield_radius_km: 15
+  airfield_max_agl_ft: 4000
+  # An end counts as "seen low" (resolvable) if the ground was seen or the first/last point is
+  # below this height above the nearest field within the radius. The M2 target uses these.
+  seen_low_agl_ft: 5000
+  seen_low_field_radius_km: 30
   lookback_days: 1              # days before D read to find flights airborne at midnight
 
 d1_volume_surge:
