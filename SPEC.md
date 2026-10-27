@@ -51,7 +51,7 @@ Filter:
 
 | Family | Type codes (initial) |
 |---|---|
-| Tanker | K35R, KC46, C30J (KC-130J) |
+| Tanker | K35R, KC46 and B762 (KC-46A; adsb.lol uses B762), C30J (KC-130J) |
 | Strategic airlift | C17, C5M |
 | Tactical airlift | C130, C30J |
 

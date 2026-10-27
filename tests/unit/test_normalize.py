@@ -56,3 +56,10 @@ def test_coverage_counts_distinct_aircraft_with_sampling():
     acc.add([raw("a3", None, lat=None)])  # no position: not counted
     rows = acc.rows()
     assert len(rows) == 1 and rows[0]["aircraft"] == 2
+
+
+def test_b762_is_a_tanker_only_inside_the_military_block():
+    fleet = load_fleet()
+    assert "tanker" in fleet.families_for_type("B762")  # KC-46A as typed by adsb.lol
+    pts = [raw("ae5c01", "B762"), raw("a4b2c1", "B762")]  # military vs civil 767-200
+    assert {p.hex for p in normalize(pts, fleet, registry={})} == {"ae5c01"}

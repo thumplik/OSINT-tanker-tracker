@@ -6,11 +6,13 @@ military_hex_block:
 # A type code may belong to more than one family (C30J is both a tanker and tactical airlift).
 families:
   tanker:
-    types: [K35R, KC46, C30J]
+    types: [K35R, KC46, B762, C30J]
   strategic_airlift:
     types: [C17, C5M]
   tactical_airlift:
     types: [C130, C30J]
+# B762: adsb.lol types the KC-46A as B762 (no KC46 seen in real dumps; owner-confirmed
+# 2026-10-27). Only hexes in the military block count, so civil 767-200s are excluded.
 # KC-10 (DC10) retired in 2024 and is intentionally not listed.
 
 # ADSBx v2 `type` values (position source) treated as lower quality.
