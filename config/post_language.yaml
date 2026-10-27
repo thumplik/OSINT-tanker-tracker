@@ -1,0 +1,19 @@
+# Approved post vocabulary (SPEC §9, CLAUDE.md rule 7). Posts never claim intent.
+approved_terms:
+  - unusual
+  - above normal
+  - below normal
+  - higher than typical
+  - worth watching
+  - not seen recently
+forbidden_terms:
+  - strike
+  - attack
+  - deployment
+  - deploying
+  - invasion
+  - imminent
+  - war
+  - retaliation
+  - preparing for
+attribution: "Data: adsb.lol (ODbL)"

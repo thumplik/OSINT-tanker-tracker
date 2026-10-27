@@ -1,0 +1,11 @@
+# Announced exercises, air shows, etc. (SPEC §8). Matching alerts are downgraded and labeled,
+# not hidden.
+#
+# - id: example-exercise
+#   name: "Exercise name"
+#   regions: [europe]
+#   families: [tanker, strategic_airlift]
+#   from: 2026-06-01
+#   to: 2026-06-14
+#   source: "link to announcement"
+events: []

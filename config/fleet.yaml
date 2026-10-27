@@ -1,0 +1,17 @@
+# Tracked fleet (SPEC §3). Edit here, never in code.
+military_hex_block:
+  start: "ae0000"
+  end: "afffff"
+
+# A type code may belong to more than one family (C30J is both a tanker and tactical airlift).
+families:
+  tanker:
+    types: [K35R, KC46, C30J]
+  strategic_airlift:
+    types: [C17, C5M]
+  tactical_airlift:
+    types: [C130, C30J]
+# KC-10 (DC10) retired in 2024 and is intentionally not listed.
+
+# ADSBx v2 `type` values (position source) treated as lower quality.
+low_quality_sources: [mlat, mode_s, tisb_trackfile, other]

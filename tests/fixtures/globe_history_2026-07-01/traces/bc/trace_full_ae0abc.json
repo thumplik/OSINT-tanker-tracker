@@ -1,0 +1,1 @@
+{"icao": "ae0abc", "r": null, "t": "C17", "dbFlags": 1, "timestamp": 1782864000, "trace": [[3600, 50.0, 8.6, 30000, 450.0, 90.0, 0, 0, {"flight": "RCH123"}, "adsb_icao", null, null, null, null], [3660, 50.0, 8.9, 30000, 450.0, 90.0, 0, 0, null, "adsb_icao", null, null, null, null]]}

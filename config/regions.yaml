@@ -1,0 +1,59 @@
+# Regions (SPEC §6). Coarse lat/lon boxes; the first matching region wins, checked against each
+# H3 r4 cell centre, so every r4 cell belongs to exactly one region. Anything unmatched is "other".
+#
+# status: watch | alerting. Every region starts as watch. Promotion to alerting is a manual edit
+# made after reviewing that region's backtest. Never promote a region in code.
+h3_resolution: 4
+regions:
+  - id: alaska
+    name: Alaska
+    status: watch
+    boxes: [[51, 72, -180, -129]]          # [lat_min, lat_max, lon_min, lon_max]
+  - id: conus_west
+    name: CONUS West
+    status: watch
+    boxes: [[24, 50, -125, -100]]
+  - id: conus_east
+    name: CONUS East
+    status: watch
+    boxes: [[24, 50, -100, -66]]
+  - id: caribbean_central_america
+    name: Caribbean / Central America
+    status: watch
+    boxes: [[5, 24, -120, -58]]
+  - id: north_atlantic
+    name: North Atlantic
+    status: watch
+    boxes: [[24, 72, -66, -10]]
+  - id: eastern_med
+    name: Eastern Med
+    status: watch
+    boxes: [[30, 38, 20, 37]]
+  - id: europe
+    name: Europe
+    status: watch
+    boxes: [[35, 72, -10, 40]]
+  - id: middle_east_gulf
+    name: Middle East / Gulf
+    status: watch
+    boxes: [[12, 40, 37, 63]]
+  - id: africa
+    name: Africa
+    status: watch
+    boxes: [[-35, 35, -20, 52]]
+  - id: indian_ocean
+    name: Indian Ocean
+    status: watch
+    boxes: [[-45, 25, 52, 100]]
+  - id: western_pacific
+    name: Western Pacific
+    status: watch
+    boxes: [[-10, 50, 100, 160]]
+  - id: pacific_hawaii
+    name: Pacific / Hawaii
+    status: watch
+    boxes: [[-30, 60, 160, 180], [-30, 51, -180, -125]]
+  - id: other
+    name: Other
+    status: watch
+    boxes: []

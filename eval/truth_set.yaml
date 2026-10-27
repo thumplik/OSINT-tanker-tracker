@@ -1,0 +1,11 @@
+# Hand-labeled periods for threshold tuning (SPEC §12). Used to CHOOSE thresholds and compare
+# detector versions; nothing is fit to it automatically. Target: 20–40 periods, including quiet ones.
+#
+# - id: example-2026-01
+#   region: middle_east_gulf
+#   family: tanker
+#   from: 2026-01-10
+#   to: 2026-01-14
+#   label: surge            # surge | quiet | exercise | coverage_artifact
+#   source: "public reporting / NOTAM / announced exercise, with link"
+periods: []

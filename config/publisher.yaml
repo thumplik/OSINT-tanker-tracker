@@ -1,0 +1,5 @@
+# Publisher settings (SPEC §9). auto_post defaults to false and stays false until a precision
+# target is written into SPEC.md. Nothing posts unless alert.status == "approved".
+auto_post: false
+daily_post_cap: 6
+links_in_self_reply: true

@@ -1,0 +1,14 @@
+# Provider rate limits (SPEC §2). Enforced by ingest/ratelimit.py: [requests per second, burst].
+rate_limits:
+  adsb_lol: [1.0, 1]
+  airplanes_live: [1.0, 1]
+  adsb_fi: [1.0, 1]
+  adsb_lol_history: [0.5, 1]     # release downloads for globe_history
+attribution:
+  adsb_lol: "adsb.lol (ODbL)"
+  airplanes_live: "airplanes.live"
+  adsb_fi: "adsb.fi open data (https://adsb.fi)"
+
+# Coverage denominator (SPEC §5): count each aircraft at most once per this many seconds when
+# building per-cell hourly coverage. Keeps a full global day tractable.
+coverage_sample_seconds: 60

@@ -1,0 +1,53 @@
+[project]
+name = "tanker-watch"
+version = "0.1.0"
+description = "OSINT tracker for US military tanker and airlift activity from public ADS-B data"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "duckdb>=1.1",
+    "h3>=4.1,<5",
+    "pyarrow>=17",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+tw = "tw.cli:main"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.11",
+    "pytest>=8.3",
+    "ruff>=0.6",
+    "types-pyyaml>=6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tw"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+packages = ["tw"]
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["tw.detectors.*", "tw.publisher.*"]
+strict = true

@@ -1,0 +1,291 @@
+# Tanker Watch — Project Spec (v0.4)
+
+Working name; rename freely.
+
+## 1. Purpose
+
+A public-data OSINT system that tracks US military tanker and airlift aircraft, learns their normal patterns, flags statistically unusual activity, and drafts posts for X highlighting that something may be happening.
+
+Three surfaces:
+
+1. **Dashboard**: H3 hex heat maps, timelines, airfield activity, live alert feed, and a historical view for any past day.
+2. **Detection engine**: deterministic baselines and anomaly detectors.
+3. **Publisher**: turns approved alerts into posts with a chart image.
+
+### Non-goals (v1)
+
+- No claims about intent or purpose. The system reports *what is unusual*, never *why*.
+- No tracking of individual crews or people.
+- No non-US fleets (keep the provider and type config generic so this can change later).
+
+## 2. Data sources
+
+All providers below speak the ADS-B Exchange v2 JSON schema, so one adapter interface covers them.
+
+| Role | Provider | Notes |
+|---|---|---|
+| Baseline history | adsb.lol `globe_history` dumps | Free, ODbL. Use for the 90-day baseline and backtests. |
+| Live primary | adsb.lol or airplanes.live `/v2` | Free tiers, ~1 req/s. Prefer the military endpoint where offered. |
+| Live fallback | adsb.fi open data | Personal, non-commercial; attribution and link required. |
+| Upgrade path | ADS-B Exchange (RapidAPI or commercial) | Paid; no bulk redistribution. |
+| Reference | OurAirports CSV | Airfield lat/lon, ICAO codes, type (military vs civil). |
+
+Rules:
+
+- Respect each provider's rate limit with a token bucket per provider.
+- Store raw responses (gzip JSONL) for 14 days so any alert can be re-derived.
+- Keep normalized points, sorties, baselines and alerts **forever** (see §11). Filtered to the tracked fleet, this is small: expect well under 1 GB per year in Parquet.
+- Backfill: load as far back as the history dumps allow (target 12+ months) so the historical view and backtests have depth from day one.
+- **Decided: personal, non-commercial project.** This keeps the free tiers usable. Re-check licensing before anything that earns money (including ads, subscriptions or X creator revenue). Alerts publish derived aggregates only, never raw feeds.
+- Home feeder: deferred (see §15). Not required for v1; the provider adapter must work without one.
+
+## 3. Aircraft scope
+
+Config-driven (`config/fleet.yaml`), not hard-coded.
+
+Filter:
+
+- ICAO hex in the US military block `AE0000–AFFFFF`
+- **and** ICAO type in the tracked families
+
+| Family | Type codes (initial) |
+|---|---|
+| Tanker | K35R, KC46, C30J (KC-130J) |
+| Strategic airlift | C17, C5M |
+| Tactical airlift | C130, C30J |
+
+Notes:
+
+- KC-10 retired in 2024; keep it out of the default list.
+- Some aircraft broadcast without position (Mode S only) or via MLAT. Flag `position_source` on every point.
+- A hex can appear without a type. Resolve it against a local registry table built from history before discarding it.
+
+## 4. Architecture
+
+```
+providers ──▶ ingest worker ──▶ raw store (JSONL.gz)
+                    │
+                    ▼
+            normalize + filter ──▶ points (Parquet / DuckDB)
+                    │
+                    ▼
+            track segmenter ──▶ sorties (origin, dest, path, H3 cells)
+                    │
+                    ▼
+            baseline builder ──▶ baselines (nightly)
+                    │
+                    ▼
+            detectors ──▶ alerts ──▶ approval queue ──▶ X publisher
+                    │
+                    ▼
+               API (FastAPI) ──▶ dashboard
+```
+
+### Stack (proposed)
+
+- Python 3.12, `uv`, FastAPI, DuckDB over Parquet (single node; migrate to Postgres/Timescale only if needed)
+- `h3` v4 for spatial indexing
+- Dashboard: reuse Analysis Workbench widgets if the stack fits; otherwise React + MapLibre + deck.gl `H3HexagonLayer`
+- Chart images for posts: Plotly + Kaleido (static PNG)
+- Scheduling: one long-running worker with APScheduler
+
+### Hosting (decided)
+
+- **Frontend + read API: Vercel** (Tom's account).
+- **Ingest/detection worker: not on Vercel.** It polls every few seconds around the clock and needs a disk, which serverless functions don't provide. Run it on a small always-on box: a cheap VPS, or a home Raspberry Pi (which can double as a feeder later).
+- **Hand-off between them**: the worker publishes per-day aggregates, sorties and alerts to shared storage that Vercel reads: Postgres (e.g. Neon) for alerts and the approval queue, and object storage (e.g. Vercel Blob) for daily Parquet/aggregate files. Raw points stay on the worker.
+- Approve/reject writes go to Postgres; the worker picks up approved alerts and posts them. The X credentials live only on the worker.
+
+## 5. Core data model
+
+**Point**: `ts, hex, callsign, type, lat, lon, alt_baro, gs, track, on_ground, position_source, provider, h3_r4, h3_r6`
+
+**Sortie**:
+- Starts at first airborne point; ends at landing or a gap > 30 min
+- `origin_icao` / `dest_icao`: nearest airfield within 10 km while below 3,000 ft AGL; `null` if unresolved
+- Fields: `sortie_id, hex, type_family, callsign, start_ts, end_ts, origin_icao, dest_icao, h3_cells[], max_alt, is_orbit, orbit_hours`
+
+**Coverage**: per H3 r4 cell per hour, count of *all* aircraft seen (civil included). This is the denominator that separates real surges from receiver coverage changes.
+
+**Alert**: `alert_id, detector, region, window, observed, expected, score, severity, evidence{}, sortie_ids[], created_at, status (new|approved|rejected|posted|suppressed), post_draft, chart_path`
+
+## 6. Regions
+
+**Decided: global.** Ingest is global by default; one military-endpoint poll returns tracked aircraft worldwide, so there is no extra cost.
+
+Defined in `config/regions.yaml` as named polygons converted to H3 r4 cell sets that tile the globe: CONUS East, CONUS West, Alaska, Caribbean/Central America, North Atlantic, Europe, Eastern Med, Middle East/Gulf, Africa, Indian Ocean, Western Pacific, Pacific/Hawaii, plus "Other".
+
+Because ADS-B coverage varies a lot (good over the US and Europe, sparse over oceans and parts of the Middle East and Africa), each region carries a status:
+
+- `alerting`: 8+ weeks of baseline, and coverage stable enough that the coverage guard passes most days. Alerts go to the post queue.
+- `watch`: data shown on the dashboard and detectors run, but alerts stay in-app only.
+
+Every region starts as `watch`. Promotion to `alerting` is a manual config change, made after reviewing that region's backtest.
+
+Heat maps use r4 (regional view) and r6 (local view).
+
+## 7. Baselines
+
+### How "abnormal" is defined
+
+v1 uses **forecast + surprise**, not a trained classifier. There are no labeled examples of "abnormal" to train on, and every alert must be explainable in one sentence ("14 tanker sorties in 24h vs a typical 5").
+
+For each key, an alert requires all four of:
+
+1. **Expected**: the baseline median for that key.
+2. **Surprise**: robust z = (observed − median) / (1.4826 × MAD) above threshold. If MAD is 0, use a configured floor so sparse keys don't produce infinite scores.
+3. **Real**: the coverage guard passes (§8). A rise in total traffic in the same area suggests receivers, not aircraft.
+4. **Material**: the observed count clears an absolute minimum, so 1 → 3 sorties never fires on its own.
+
+### Mechanics
+
+- Rebuilt nightly from a trailing 56-day window (configurable)
+- Keyed by `(region, family, day_of_week)` and, where needed, `(airfield, family)` and `(route, family)`
+- Robust statistics: median and MAD. No means/standard deviations on sparse counts.
+- Minimum history: a key with fewer than 4 weeks of data cannot alert. It is shown as "insufficient baseline".
+
+## 8. Detectors
+
+Every detector is a pure function: `(window_data, baseline, config) -> list[Alert]`. No randomness, no LLM, no network access. Every threshold lives in `config/detectors.yaml`.
+
+| ID | Name | Fires when |
+|---|---|---|
+| D1 | Volume surge | Region × family sortie count over 24h has robust z ≥ 3.0 **and** count ≥ `min_count` **and** coverage-normalized ratio also exceeds threshold |
+| D2 | Novel destination | Arrivals at an airfield that saw ≤ 1 arrival of that family in the baseline window, with ≥ 2 arrivals in 72h |
+| D3 | Unusual orbit | Tanker orbit-hours (cumulative heading change ≥ 720° within 40 km radius) in an r4 cell above that cell's baseline p95 |
+| D4 | Airlift convergence | ≥ N distinct strategic-airlift hexes arriving at one airfield or region within 48h, robust z ≥ 3.0 |
+| D5 | Route shift | Share of a family's sorties on a route pair departs from baseline share by ≥ X points over 72h |
+
+### Guards (always on)
+
+- **Coverage guard**: suppress if regional total traffic is below 60% of its own baseline. Fewer receivers means fake drops; recovered receivers mean fake surges.
+- **Exercise calendar**: optional `config/known_events.yaml` (announced exercises, air shows). Matching alerts are downgraded and labeled, not hidden.
+- **Cooldown**: same detector + region cannot alert again within 12h unless severity rises.
+
+### Composite scoring
+
+Alerts in the same region within 24h merge into one event. Severity: `low` (one detector), `medium` (two detectors or z ≥ 4), `high` (three or more detectors). Only medium and high go to the post queue by default.
+
+## 9. Publisher
+
+### Workflow
+
+1. Alert reaches `new`.
+2. Draft is generated: template fills in the numbers; an LLM may optionally smooth the wording but must not add or change any number, place or claim. A validator re-checks every number in the draft against the alert record.
+3. Chart rendered: last 30 days vs baseline band, plus a hex map snapshot.
+4. Owner approves or rejects in the dashboard (or through a push/Telegram message).
+5. Only `approved` alerts are posted. **Auto-post mode is a config flag that defaults to off.** No target is set yet: thresholds will be chosen from the backtest sweep and the approval log once real data exists. Auto-post stays off until a target is written into this spec.
+
+### Post rules
+
+- Hedged language: "unusual", "above normal", "worth watching". Never "strike", "deployment" or any claim of intent.
+- Every post states observed vs normal (e.g. "14 tanker sorties in 24h vs a typical 5").
+- Attribute the data source.
+- Keep links out of the main post (X charges far more for posts with links); put the dashboard link in a self-reply.
+- Daily post cap (default 6).
+
+## 10. Dashboard views
+
+1. **Heat map**: H3 hexes by family and time range, with a baseline-difference toggle (observed minus expected).
+2. **Alert feed**: cards with evidence, sortie list and approve/reject.
+3. **Airfield board**: arrivals and departures by family, sparklines vs baseline.
+4. **Sortie inspector**: track replay for any sortie.
+5. **Coverage panel**: receiver coverage health by region.
+6. **Date picker + time scrubber**: present on every view; switches the whole dashboard to a past day (see §11).
+
+## 11. Historical view ("time travel")
+
+Pick any past date (or date range) and see the system exactly as it would have looked then.
+
+### What the user can do
+
+- **Day view**: choose a date; the heat map, airfield board, sortie list and alert feed all show that day.
+- **Playback**: a time scrubber replays that day's tracks (1×, 10×, 60×, 600×), with sorties appearing and disappearing on the map.
+- **Then vs. normal**: every count shows the baseline *as it stood on that date*, so "unusual for then" is judged honestly.
+- **Compare**: pick two dates (or a date vs. its baseline) for side-by-side or difference heat maps.
+- **Alert re-run**: "What would have fired?" runs the current detectors over the past day without saving or posting anything. Results are labeled as retrospective.
+- **Shareable links**: every view encodes its state in the URL (`?date=2026-06-14&t=1430Z&family=tanker&region=med`).
+
+### Point-in-time correctness (non-negotiable)
+
+- Baselines are stored as dated snapshots (`baselines/as_of=YYYY-MM-DD/`). Viewing a past day always uses the snapshot from that day, never today's baseline. This prevents future data leaking into the past.
+- Historical alerts are shown exactly as they were created (status, wording, draft). Retrospective re-runs are a separate, clearly labeled layer and never overwrite them.
+- Every detector and baseline run records its config hash and code version, so a past alert can be reproduced.
+
+### Storage and API
+
+- Points and sorties are partitioned by UTC date (`points/date=YYYY-MM-DD/*.parquet`) so loading a day reads one partition.
+- Pre-compute per-day H3 aggregates (r4 and r6, hourly) when a day closes, so day views render in under a second.
+- Every API endpoint takes `date` / `from` / `to` / `as_of`. "Live" is just `date=today`; there is one code path, not two.
+- Playback endpoint returns a compact per-minute track stream for the selected day and filters.
+
+## 12. Testing and evaluation
+
+### Truth set (for tuning, not training)
+
+- `eval/truth_set.yaml`: hand-labeled date ranges, each with region, family, label (`surge` | `quiet` | `exercise` | `coverage_artifact`), and a source note (public reporting, NOTAM, announced exercise).
+- Aim for 20–40 labeled periods, including quiet ones, so false positives are measured too.
+- The truth set is used to **choose thresholds** and to **compare detector versions**. Nothing is fit to it automatically.
+
+### Metrics (`tw backtest` report)
+
+- **Recall on labeled surges**: did an alert fire within ±1 day?
+- **Precision**: share of alerts that land on a labeled surge or that the owner would have posted
+- **Alert rate**: alerts per week by severity. Target: a few medium/high per week.
+- **Lead time**: hours from first alert to first public reporting, where known
+- Threshold sweep: precision/recall/alert-rate table across z thresholds, so tuning is a deliberate choice
+
+### Approval-log labels
+
+Every approve/reject in the publisher is stored with the alert's full feature snapshot (`eval/approvals.parquet`). Note: these labels mean "worth posting", which is not the same as "truly anomalous".
+
+### Tests
+
+- **Unit**: each detector tested on synthetic data (inject a surge; confirm it fires. Inject a coverage drop; confirm it is suppressed).
+- **Replay**: `replay` mode runs the full pipeline over historical dumps at accelerated speed, with no live calls.
+- **Backtest**: run detectors over 6+ months of history. Hand-label notable periods as a small truth set. Report precision and alerts per week.
+- **Point-in-time test**: compute a past day's view, then add later data; the past view must not change.
+- **Golden files**: fixed input day → fixed alert output. Any detector change that alters golden output must be explained in the PR.
+
+## 13. Detection roadmap (ML, later)
+
+Ordered by value. Each stage must beat the previous one on the backtest before it ships, and every stage still has to produce an "expected X, observed Y" explanation.
+
+| Stage | Method | Prerequisite | Role |
+|---|---|---|---|
+| S0 (v1) | Day-of-week median/MAD baselines | 8 weeks of history | Primary detector |
+| S1 | Seasonal forecast (STL or Prophet-style), with holiday and exercise-cycle effects | 12+ months of history | Replaces the median as "expected"; detectors unchanged |
+| S2 | Isolation forest over daily per-region feature vectors (counts, new destinations, orbit hours, route mix) | S1 shipped; 12+ months | Catches unusual *combinations*; feeds composite scoring, never alerts alone |
+| S3 | Supervised ranker trained on approval-log labels | ~200+ approve/reject decisions | Ranks the post queue by "worth posting". Does **not** decide what is anomalous. |
+
+Rules for every ML stage:
+
+- Lives in `models/`, never in `detectors/`. Detectors consume model outputs as inputs, so they stay pure.
+- Trained only on data before the evaluation period (no leakage), and versioned with the training window recorded.
+- Never posts directly and never produces a number that appears in a post.
+
+## 14. Milestones
+
+| M | Deliverable | Done when |
+|---|---|---|
+| M0 | Repo scaffold, config files, CI, CLAUDE.md | `uv run pytest` passes; lint clean |
+| M1 | Historical loader + normalize/filter, date-partitioned storage | 12 months of history loaded; per-family counts look sane |
+| M2 | Track segmenter + airfield resolution | ≥ 90% of sorties in sample get an origin and destination |
+| M3 | Baselines + D1, D2 + coverage guard | Backtest report generated |
+| M4 | Live ingest worker | Runs 72h unattended; rate limits respected |
+| M5 | Dashboard (heat map, alert feed) with date picker | Usable on desktop and phone; any backfilled day loads in < 1 s |
+| M5b | Playback, compare mode, retrospective alert re-run | Scrub a full day smoothly; point-in-time test passes |
+| M6 | D3–D5, composite scoring | Backtest precision reviewed |
+| M7 | Publisher with approval queue | First approved post goes out |
+| M8 | Truth set + threshold sweep report | 20+ labeled periods; thresholds chosen from the sweep |
+
+## 15. Open decisions
+
+Decided (Oct 2026): personal project · Vercel frontend + separate always-on worker · global coverage with per-region promotion · targets set later from data.
+
+Still open:
+
+- X account name and posting voice
+- Worker host: VPS or home Raspberry Pi
+- Home feeder: optional; revisit after M4
+- Precision and alert-rate target for auto-post (set after M8)

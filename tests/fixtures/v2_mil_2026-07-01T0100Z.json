@@ -1,0 +1,43 @@
+{
+ "now": 1782867600000,
+ "total": 4,
+ "ac": [
+  {
+   "hex": "ae1234",
+   "t": "K35R",
+   "flight": "PACK21  ",
+   "lat": 40.2,
+   "lon": -76.8,
+   "alt_baro": 15000,
+   "gs": 350.1,
+   "track": 270.0,
+   "type": "adsb_icao",
+   "seen_pos": 1.5,
+   "seen": 0.2
+  },
+  {
+   "hex": "ae0abc",
+   "t": "C17",
+   "alt_baro": 32000,
+   "type": "mode_s",
+   "seen": 4.0
+  },
+  {
+   "hex": "~ae1111",
+   "t": "K35R",
+   "lat": 1.0,
+   "lon": 2.0,
+   "type": "tisb_trackfile",
+   "seen_pos": 0
+  },
+  {
+   "hex": "ae2222",
+   "t": "KC46",
+   "lat": 32.0,
+   "lon": -81.0,
+   "alt_baro": "ground",
+   "type": "mlat",
+   "seen_pos": 0
+  }
+ ]
+}

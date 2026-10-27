@@ -1,0 +1,47 @@
+# All detector thresholds (SPEC §7–8). No magic numbers in detector code.
+baseline:
+  window_days: 56
+  min_history_days: 28          # keys with less history show "insufficient baseline"
+  mad_scale: 1.4826
+  mad_floor: 1.0                # used when MAD is 0 so sparse keys don't give infinite z
+
+sortie:
+  max_gap_minutes: 30
+  airfield_radius_km: 10
+  airfield_max_agl_ft: 3000
+
+d1_volume_surge:
+  window_hours: 24
+  min_z: 3.0
+  min_count: 6
+  min_coverage_normalized_ratio: 1.5
+
+d2_novel_destination:
+  window_hours: 72
+  max_baseline_arrivals: 1
+  min_arrivals: 2
+
+d3_unusual_orbit:
+  min_heading_change_deg: 720
+  max_radius_km: 40
+  baseline_percentile: 95
+
+d4_airlift_convergence:
+  window_hours: 48
+  min_distinct_hexes: 4
+  min_z: 3.0
+
+d5_route_shift:
+  window_hours: 72
+  min_share_change_points: 20
+
+guards:
+  coverage_min_ratio: 0.6       # suppress if regional traffic < 60% of its baseline
+  cooldown_hours: 12
+
+composite:
+  merge_window_hours: 24
+  medium_min_detectors: 2
+  medium_min_z: 4.0
+  high_min_detectors: 3
+  post_queue_severities: [medium, high]
