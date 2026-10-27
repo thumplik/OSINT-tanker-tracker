@@ -26,7 +26,7 @@ def _data_dir() -> Path:
 def _print_summary(label: str, summary: LoadSummary) -> None:
     print(
         f"{label}: traces={summary.traces} military_points={summary.military_points} "
-        f"kept={summary.kept_points} stray={summary.stray_traces}"
+        f"kept={summary.kept_points} stray_rows={summary.stray_rows}"
     )
     for day, n in summary.points_per_day.items():
         print(f"  {day.isoformat()}  {n} points")

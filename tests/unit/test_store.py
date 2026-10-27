@@ -99,29 +99,31 @@ def test_untracked_military_types_feed_registry_without_points(tmp_path, fixture
     assert "ae4ff0" not in set(day["hex"].to_pylist())
 
 
-def _write_trace(root, hex_code: str, timestamp: int, type_code: str = "K35R") -> None:
+def _write_trace(root, hex_code: str, timestamp: int, dts: list[float], **extra) -> None:
     folder = root / "traces" / hex_code[-2:]
     folder.mkdir(parents=True, exist_ok=True)
-    doc = {
-        "icao": hex_code,
-        "t": type_code,
-        "timestamp": timestamp,
-        "trace": [[60, 40.0, -76.0, 20000, 400.0, 90.0, 0, 0, None, "adsb_icao"]],
-    }
+    rows = [[dt, 40.0, -76.0, 20000, 400.0, 90.0, 0, 0, None, "adsb_icao"] for dt in dts]
+    if "flight" in extra:
+        rows[0][8] = {"flight": extra["flight"]}
+    doc = {"icao": hex_code, "t": "K35R", "timestamp": timestamp, "trace": rows}
     (folder / f"trace_full_{hex_code}.json").write_text(json.dumps(doc))
 
 
 def test_release_only_loads_its_own_day(tmp_path):
-    """Releases carry a few leftover traces from earlier days (seen in 2025 adsb.lol dumps),
-    mostly duplicating that day's own release. A release tagged D loads only day-D traces,
-    even when a leftover is read first."""
+    """Seen in 2025 adsb.lol releases: rows before midnight (negative dt) and leftover traces
+    dated earlier days, almost all duplicates of the earlier day's own release. A release
+    tagged D keeps only rows inside day D, even when a leftover trace is read first."""
     src = tmp_path / "v2026.07.03-planes-readsb-prod-0"
-    _write_trace(src, "ae0001", 1782864000)  # 2026-07-01: leftover, sorts first
-    _write_trace(src, "ae1234", 1783036800)  # 2026-07-03: the release's own day
+    _write_trace(src, "ae0001", 1782864000, [60, 120])  # dated 2026-07-01, sorts first
+    # Starts 2026-07-02 23:00Z, callsign only on the pre-midnight row.
+    _write_trace(src, "ae1234", 1783036800, [-3600, 60, 90000], flight="TEAL71  ")
     data = tmp_path / "data"
     summary = load_dump(src, data, load_fleet())
-    assert summary.traces == 1 and summary.stray_traces == 1
+    assert summary.traces == 1 and summary.stray_rows == 4
     assert summary.points_per_day == {date(2026, 7, 3): 1}
-    assert not partition_dir(data, "points", date(2026, 7, 1)).exists()
-    assert not partition_dir(data, "coverage", date(2026, 7, 1)).exists()
+    day = read_day(data, "points", date(2026, 7, 3))
+    assert day["callsign"].to_pylist() == ["TEAL71"]  # carried forward across midnight
+    for other in (date(2026, 7, 1), date(2026, 7, 2), date(2026, 7, 4)):
+        assert not partition_dir(data, "points", other).exists()
+        assert not partition_dir(data, "coverage", other).exists()
     assert load_registry(data, date(2026, 7, 3)) == {"ae1234": "K35R"}

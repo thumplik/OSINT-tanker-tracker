@@ -9,8 +9,9 @@ trace file is gzip-compressed JSON despite the `.json` name::
      "trace": [[dt, lat, lon, alt, gs, track, flags, vrate, details, source,
                 alt_geom, geom_rate, ias, roll], ...]}
 
-- `dt` is seconds after `timestamp`, in [0, 86400): a trace covers one UTC day. A release
-  also holds a few leftover traces from earlier days; the loader drops them.
+- `dt` is seconds after `timestamp`, usually in [0, 86400). 2025 releases also have rows
+  before midnight (negative `dt`) and leftover traces dated earlier days; the loader keeps
+  only rows inside the release's own day.
 - `alt` is an int (ft), "ground" or null. When `flags & 8` it is geometric, not barometric.
 - `details` is null or an object with fields such as `flight` (space-padded callsign), only
   present on some rows, so the last seen callsign is carried forward.

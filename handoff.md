@@ -6,8 +6,10 @@ _Last updated: 2026-10-27_
 
 ## Done
 - KC-46A: adsb.lol types it `B762`; owner confirmed, now in the tanker family (military block only).
-- A release tagged D loads only traces dated D. 2025 releases carry leftover traces from up to
-  a week earlier (~95% duplicate points, double-counted coverage); they are dropped as `stray`.
+- A release tagged D loads only rows inside day D. 2025 releases carry pre-midnight rows
+  (negative `dt`) and leftover traces from up to a week earlier (~97% duplicate points,
+  double-counted coverage); dropped as `stray_rows` (42k on 2025-10-29). Verified one
+  partition per release on real data. 2025 tars put traces first, so no heatmap to skip.
 - M0: scaffold, config, CI, public repo (thumplik/OSINT-tanker-tracker).
 - M1 core: parsers, fleet filter, H3 cells, coverage counts, date-partitioned Parquet.
 - Parser verified on real dumps (readsb 3.16.15); `flags & 8` geometric altitude fixed.

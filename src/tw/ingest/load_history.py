@@ -26,7 +26,7 @@ class LoadSummary:
     military_points: int
     kept_points: int
     points_per_day: dict[date, int]
-    stray_traces: int = 0  # traces dated another day, not loaded
+    stray_rows: int = 0  # trace rows outside the dump's day, not loaded
 
 
 _TAG_DAY = re.compile(r"v(\d{4})\.(\d{2})\.(\d{2})-")
@@ -38,6 +38,15 @@ def day_from_tag(tag: str) -> date | None:
     return date(int(m[1]), int(m[2]), int(m[3])) if m else None
 
 
+SECONDS_PER_DAY = 86400
+
+
+def _row_in_window(row: Any, base: float, start: float) -> bool:
+    if not isinstance(row, list) or not row or not isinstance(row[0], int | float):
+        return False
+    return start <= base + row[0] < start + SECONDS_PER_DAY
+
+
 def load_docs(
     docs: Iterable[dict[str, Any]],
     data_dir: Path,
@@ -47,10 +56,10 @@ def load_docs(
 ) -> LoadSummary:
     """Parse trace documents, write points and coverage partitions.
 
-    A dump holds one UTC day: `day`, or the first trace's day when not given. Releases also
-    carry a few leftover traces dated earlier days, mostly duplicates of points already in
-    those days' own releases; they are counted in `stray_traces` and not loaded, so each
-    release writes exactly one day.
+    A dump holds one UTC day: `day`, or the first trace's day when not given. Only rows inside
+    that day are loaded. Releases also carry rows from before midnight (negative `dt`) and
+    leftover traces dated earlier days, almost all duplicates of points already in those
+    days' own releases; they are counted in `stray_rows`, so each release writes one day.
 
     Re-loading the same dump replaces its part files, so loads are idempotent. Nothing is
     written until the whole dump has been read, so a failed download leaves no partial day.
@@ -66,15 +75,16 @@ def load_docs(
         icao, base, rows = doc.get("icao"), doc.get("timestamp"), doc.get("trace") or []
         if not isinstance(icao, str) or not isinstance(base, int | float):
             continue
-        doc_day = datetime.fromtimestamp(base, tz=UTC).date()
         if day is None:
-            day = doc_day
-        if doc_day != day:
-            stray += 1
+            day = datetime.fromtimestamp(base, tz=UTC).date()
+        start = datetime(day.year, day.month, day.day, tzinfo=UTC).timestamp()
+        in_day = [r for r in rows if _row_in_window(r, base, start)]
+        stray += len(rows) - len(in_day)
+        if not in_day:
             continue
         traces += 1
         hex_code, non_icao = clean_hex(icao)
-        coverage.add_trace_rows(icao.lower(), float(base), rows)  # keep "~" distinct
+        coverage.add_trace_rows(icao.lower(), float(base), in_day)  # keep "~" distinct
         if non_icao or not fleet.in_military_block(hex_code):
             continue
         type_code = (clean_str(doc.get("t")) or "").upper() or None
@@ -82,7 +92,9 @@ def load_docs(
             observed[hex_code] = type_code
         # Untracked types only feed the registry; parse points for tracked or untyped traces.
         if type_code is None or type_code in tracked:
-            candidates.extend(parse_trace(doc))
+            # Parse the whole trace so callsigns carry forward across midnight, then trim.
+            end = start + SECONDS_PER_DAY
+            candidates.extend(p for p in parse_trace(doc) if start <= p.ts.timestamp() < end)
 
     # Resolve types from this day and earlier ones only (SPEC §11).
     registry = {**load_registry(data_dir, day), **observed} if day else observed
@@ -96,7 +108,7 @@ def load_docs(
         military_points=len(candidates),
         kept_points=len(points),
         points_per_day=per_day,
-        stray_traces=stray,
+        stray_rows=stray,
     )
 
 
