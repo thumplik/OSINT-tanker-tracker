@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import math
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, NamedTuple
@@ -25,6 +27,7 @@ class Arrival(NamedTuple):
     family: str
     hex: str
     sortie_id: str
+    day: date  # UTC day of the landing
 
 
 class KeyBaseline(NamedTuple):
@@ -48,6 +51,9 @@ class Alert:
     sortie_ids: tuple[str, ...]
     created_at: datetime  # the window end, so re-runs give identical alerts
     status: str = "new"  # new | approved | rejected | posted | suppressed
+    basis_days: tuple[date, ...] = ()  # days whose data the alert rests on (coverage-checked)
+    config_hash: str = ""  # effective configuration of the run (SPEC §11), set by the pipeline
+    code_version: str = ""
 
 
 def day_window(day: date, days: int = 1) -> tuple[datetime, datetime]:
@@ -57,8 +63,13 @@ def day_window(day: date, days: int = 1) -> tuple[datetime, datetime]:
 
 
 def alert_id(detector: str, region: str, key: str, start: datetime, end: datetime) -> str:
-    raw = f"{detector}|{region}|{key}|{start.isoformat()}|{end.isoformat()}"
+    """Stable id; a JSON array keeps fields apart even when names contain delimiters."""
+    raw = json.dumps([detector, region, key, start.isoformat(), end.isoformat()])
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def finite(*values: float) -> bool:
+    return all(math.isfinite(v) for v in values)
 
 
 def downgrade(severity: str) -> str:

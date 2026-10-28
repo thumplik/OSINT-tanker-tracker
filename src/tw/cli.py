@@ -186,7 +186,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
     from tw.pipeline import Context, run_days
 
     days = _range_days(args)
-    alerts, missing, _ = run_days(days, Context(_data_dir()))
+    ctx = Context(_data_dir(), rebuild_baselines=args.rebuild_baselines)
+    alerts, missing, _ = run_days(days, ctx)
     for a in alerts:
         day = (a.window_end - timedelta(days=1)).date()
         what = a.evidence.get("airfield", "") + " " + str(a.evidence.get("family", ""))
@@ -211,7 +212,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         end = _latest_points_day()
         start = end - timedelta(days=int(args.months * 365.25 / 12) - 1)
         days = [start + timedelta(days=i) for i in range((end - start).days + 1)]
-    path, alerts = run_backtest(days, _data_dir(), REPO / "reports")
+    path, alerts = run_backtest(days, _data_dir(), REPO / "reports", args.rebuild_baselines)
     live = sum(a.status != "suppressed" for a in alerts)
     print(f"wrote {path} ({live} alerts, {len(alerts) - live} suppressed over {len(days)} days)")
     return 0
@@ -220,6 +221,11 @@ def cmd_backtest(args: argparse.Namespace) -> int:
 def _not_yet(milestone: str) -> int:
     print(f"not implemented yet (milestone {milestone}, see SPEC §14)", file=sys.stderr)
     return 2
+
+
+REBUILD_HELP = (
+    "rebuild existing baseline snapshots (write-once otherwise; use after config changes)"
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -271,6 +277,7 @@ def build_parser() -> argparse.ArgumentParser:
     when.add_argument("--from", dest="from_", type=date.fromisoformat, help="first UTC day")
     p.add_argument("--to", type=date.fromisoformat, help="last UTC day (with --from)")
     p.add_argument("--speed", type=float, default=0, help="0 = as fast as possible (offline)")
+    p.add_argument("--rebuild-baselines", action="store_true", help=REBUILD_HELP)
     p.set_defaults(func=cmd_replay)
 
     p = sub.add_parser("backtest", help="write reports/backtest_<date>.md")
@@ -278,6 +285,7 @@ def build_parser() -> argparse.ArgumentParser:
     when.add_argument("--months", type=float, default=6, help="months ending at the latest day")
     when.add_argument("--from", dest="from_", type=date.fromisoformat, help="first UTC day")
     p.add_argument("--to", type=date.fromisoformat, help="last UTC day (with --from)")
+    p.add_argument("--rebuild-baselines", action="store_true", help=REBUILD_HELP)
     p.set_defaults(func=cmd_backtest, date=None)
 
     for name, milestone in [

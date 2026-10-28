@@ -29,14 +29,21 @@ _Last updated: 2026-10-27_
     owner). Known events downgrade. 12 h cooldown.
 - `pipeline.py` (`prepare_day`, `detect_day`, `run_days`), `backtest.py`, `tw replay`, `tw backtest`.
   The golden file is `tests/golden/pipeline_surge.json`.
+- Codex adversarial review (PR #1): 14 findings. 12 fixed with regression tests
+  (`tests/detectors/test_review_findings.py`, `tests/unit/test_pipeline.py`). #9 (retrospective
+  parquet export) is by design and now labeled as such; #10 is hardened. Changes:
+  - write-once snapshots;
+  - complete-day inputs only;
+  - one config through the pipeline;
+  - per-day coverage guard;
+  - cooldown within a run;
+  - provenance on alerts and baselines.
 - Backtest (2026-04-28..10-26, `reports/backtest_2026-10-26.md`):
-  - D1 6.4/week (3.4 medium).
-  - D2 24.8/week.
-  - 49 suppressed, all by coverage.
+  - D1 6.2/week (3.3 medium).
+  - D2 13.3/week.
+  - Suppressed: 306 by cooldown (same region, same day), 45 by coverage.
 - Biggest signal: Gulf tankers (KC-135/KC-46) 2026-06-22..07-03, ~30/day vs a baseline of 0. It
   was suppressed: regional traffic was 4.9–7.2× normal. Receivers, or real? Worth labeling.
-- Not done: the CLAUDE.md "adversarial Codex review" of `detectors/`. The `codex` CLI isn't
-  installed here and the repo doesn't define the command.
 
 ## Next
 - Owner: start the truth set (`eval/truth_set.yaml`, 20–40 periods). The Gulf June days and the
@@ -48,7 +55,8 @@ _Last updated: 2026-10-27_
   Start in plan mode.
 
 ## Open questions
-- How to set up the Codex review step (CLI and command) required before merging `detectors/`.
+- The Codex review was run by the owner with a prompt from the session (in PR #1's thread).
+  Consider committing that prompt as a script so the CLAUDE.md step is repeatable.
 - Parallel backfill is order-dependent for untyped hexes. Measure before re-running sequentially.
 - Region polygons in `regions.yaml` are coarse boxes. Refine before promoting any region.
 - Worker host (VPS vs Pi) and X account name are still open (SPEC §15).

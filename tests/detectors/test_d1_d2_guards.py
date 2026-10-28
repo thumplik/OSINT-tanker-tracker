@@ -13,6 +13,11 @@ CFG = load_yaml("detectors.yaml")
 D = date(2026, 9, 15)
 NORMAL = KeyBaseline(median=5, mad=1, n_days=8)
 COV = {"europe": KeyBaseline(median=1000, mad=50, n_days=8)}
+COV_BY_WEEKDAY = {("europe", wd): COV["europe"] for wd in range(7)}
+
+
+def guard(alerts, coverage: float):
+    return apply_coverage_guard(alerts, {D: {"europe": coverage}}, COV_BY_WEEKDAY, CFG)
 
 
 def count(n: int, region="europe", family="tanker") -> RegionCount:
@@ -45,9 +50,9 @@ def test_coverage_surge_explains_the_count():
 
 
 def test_coverage_drop_suppresses():
-    (a,) = apply_coverage_guard(d1(14, coverage=500.0), {"europe": 500.0}, COV, CFG)
-    assert a.status == "suppressed" and a.evidence["suppressed_by"] == "coverage"
-    (b,) = apply_coverage_guard(d1(14), {"europe": 1000.0}, COV, CFG)
+    (a,) = guard(d1(14, coverage=500.0), 500.0)
+    assert a.status == "suppressed" and a.evidence["suppressed_by"] == ["coverage"]
+    (b,) = guard(d1(14), 1000.0)
     assert b.status == "new" and b.evidence["coverage_ratio"] == 1.0
 
 
@@ -55,12 +60,12 @@ def test_coverage_jump_suppresses():
     """Receivers came online: 5x the usual traffic. Even a count that outgrows it is suspect."""
     surge = KeyBaseline(median=0, mad=0, n_days=8)
     (a,) = d1(30, baseline=surge, coverage=5000.0)  # 30 vs 0 outgrows 5x coverage
-    (b,) = apply_coverage_guard([a], {"europe": 5000.0}, COV, CFG)
+    (b,) = guard([a], 5000.0)
     assert b.status == "suppressed" and b.evidence["coverage_ratio"] == 5.0
 
 
 def arrivals(*hexes: str, field="LTAG", family="strategic_airlift"):
-    return [Arrival(field, "eastern_med", family, h, f"{h}-{i}") for i, h in enumerate(hexes)]
+    return [Arrival(field, "eastern_med", family, h, f"{h}-{i}", D) for i, h in enumerate(hexes)]
 
 
 def test_d2_two_aircraft_at_a_novel_field_fires():
@@ -94,7 +99,7 @@ def test_cooldown_only_blocks_repeats_at_same_or_lower_severity():
     (a,) = d1(14)
     later = [replace(a, alert_id="x")]
     (b,) = apply_cooldown(later, [a], CFG)
-    assert b.status == "suppressed" and b.evidence["suppressed_by"] == "cooldown"
+    assert b.status == "suppressed" and b.evidence["suppressed_by"] == ["cooldown"]
 
 
 def test_deterministic():

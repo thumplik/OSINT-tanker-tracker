@@ -13,7 +13,7 @@ but had no sorties counts as 0, because aggregates carry every key.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -22,7 +22,8 @@ import pyarrow as pa
 
 from tw.baselines.aggregates import AGG_ARRIVALS, AGG_COVERAGE, AGG_REGION_FAMILY
 from tw.baselines.stats import mad, median
-from tw.config import config_hash, load_yaml
+from tw.config import load_yaml
+from tw.provenance import code_version, effective_config_hash
 from tw.store.parquet import partition_dir, read_day, register_schema, write_partition
 
 BL_REGION_FAMILY = "baselines/region_family"
@@ -36,6 +37,7 @@ _STATS = [
     ("mad", pa.float64()),
     ("n_days", pa.int16()),
     ("config_hash", pa.string()),
+    ("code_version", pa.string()),
 ]
 REGION_FAMILY_BL_SCHEMA = register_schema(
     BL_REGION_FAMILY,
@@ -53,6 +55,7 @@ AIRFIELD_BL_SCHEMA = register_schema(
             ("family", pa.string()),
             ("hexes", pa.int32()),
             ("config_hash", pa.string()),
+            ("code_version", pa.string()),
         ]
     ),
     key="as_of",
@@ -82,7 +85,9 @@ class AggregateCache:
         return self._cache[key]
 
 
-def _stats_rows(samples: dict[tuple[Any, ...], list[float]], cfg_hash: str) -> list[dict[str, Any]]:
+def _stats_rows(
+    samples: dict[tuple[Any, ...], list[float]], cfg_hash: str, version: str
+) -> list[dict[str, Any]]:
     rows = []
     for key, values in sorted(samples.items()):
         *ids, weekday = key
@@ -94,18 +99,35 @@ def _stats_rows(samples: dict[tuple[Any, ...], list[float]], cfg_hash: str) -> l
                 "mad": mad(values),
                 "n_days": len(values),
                 "config_hash": cfg_hash,
+                "code_version": version,
             }
         )
     return rows
 
 
-def build_baseline(as_of: date, data_dir: Path, cache: AggregateCache | None = None) -> bool:
-    """Write the three snapshots for `as_of`. Returns False if no prior day has aggregates."""
-    cfg = load_yaml("detectors.yaml")
+def snapshot_exists(data_dir: Path, as_of: date) -> bool:
+    return partition_dir(data_dir, BL_REGION_FAMILY, as_of).exists()
+
+
+def build_baseline(
+    as_of: date,
+    data_dir: Path,
+    cache: AggregateCache | None = None,
+    cfg: Mapping[str, Any] | None = None,
+    overwrite: bool = False,
+) -> bool:
+    """Write the three snapshots for `as_of`. Returns False if no prior day has aggregates.
+
+    Snapshots are write-once (SPEC §11): an existing snapshot is kept, so replaying a past day
+    after older data was backfilled still judges it by the baseline it had. `overwrite`
+    rebuilds deliberately (e.g. after a config change)."""
+    if not overwrite and snapshot_exists(data_dir, as_of):
+        return True
+    cfg = cfg if cfg is not None else load_yaml("detectors.yaml")
     window = int(cfg["baseline"]["window_days"])
     d2_days = int(cfg["d2_novel_destination"]["window_hours"]) // 24
     cache = cache or AggregateCache(data_dir)
-    cfg_hash = config_hash()
+    cfg_hash, version = effective_config_hash(cfg), code_version()
     days = [as_of - timedelta(days=n) for n in range(window, 0, -1)]
 
     counts: dict[tuple[Any, ...], list[float]] = defaultdict(list)
@@ -129,14 +151,20 @@ def build_baseline(as_of: date, data_dir: Path, cache: AggregateCache | None = N
 
     rf_rows = [
         {"region": r["ids"][0], "family": r["ids"][1], **{k: v for k, v in r.items() if k != "ids"}}
-        for r in _stats_rows(counts, cfg_hash)
+        for r in _stats_rows(counts, cfg_hash, version)
     ]
     cov_rows = [
         {"region": r["ids"][0], **{k: v for k, v in r.items() if k != "ids"}}
-        for r in _stats_rows(coverage, cfg_hash)
+        for r in _stats_rows(coverage, cfg_hash, version)
     ]
     af_rows = [
-        {"airfield": a, "family": f, "hexes": len(h), "config_hash": cfg_hash}
+        {
+            "airfield": a,
+            "family": f,
+            "hexes": len(h),
+            "config_hash": cfg_hash,
+            "code_version": version,
+        }
         for (a, f), h in sorted(seen.items())
     ]
     write_partition(data_dir, BL_REGION_FAMILY, as_of, rf_rows, REGION_FAMILY_BL_SCHEMA, PART)

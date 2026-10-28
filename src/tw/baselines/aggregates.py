@@ -9,7 +9,8 @@ Built from `sorties/date=D/` and `coverage/date=D/` only:
   denominator that separates real surges from receiver changes.
 - `aggregates/arrivals`: closed sorties with a destination airfield, one row per family.
 
-A day without a points partition gets no aggregates: it is missing, never a day of zeros.
+A day without points, sorties or coverage gets no aggregates: it is missing, never a day of
+zeros. Within a complete day, a region with no sorties is a real zero.
 """
 
 from __future__ import annotations
@@ -92,9 +93,12 @@ def build_aggregates(
     mapper: RegionMapper | None = None,
     min_sortie_minutes: float | None = None,
 ) -> bool:
-    """Write the three aggregate partitions for `day`. Returns False (writing nothing) when the
-    day has no points partition."""
-    if not partition_dir(data_dir, "points", day).exists():
+    """Write the three aggregate partitions for `day`. Returns False (writing nothing) unless
+    the day's points, sorties and coverage partitions all exist: an incomplete day is missing,
+    never a day of zeros."""
+    if not all(
+        partition_dir(data_dir, ds, day).exists() for ds in ("points", "sorties", "coverage")
+    ):
         return False
     fleet = fleet or load_fleet()
     mapper = mapper or RegionMapper(load_regions())

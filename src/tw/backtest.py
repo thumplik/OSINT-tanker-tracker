@@ -1,7 +1,9 @@
 """`tw backtest`: run the detectors over history and write `reports/backtest_<date>.md` (SPEC §12).
 
-Retrospective only: no alerts are stored and nothing is posted. Every day is judged with the
-baseline snapshot as of that day, so there is no hindsight.
+Retrospective only: nothing is written to the alert store and nothing is posted (CLAUDE.md
+rule 8). The report and its `_retrospective.parquet` table of would-have-fired alerts are review
+files in `reports/`, labeled retrospective. Every day is judged with the baseline snapshot as of
+that day, so there is no hindsight.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ import yaml
 from tw.config import DEFAULT_CONFIG_DIR, config_hash, load_regions
 from tw.detectors.types import Alert
 from tw.pipeline import Context, DayInputs, detect_day, run_days
+from tw.provenance import code_version, effective_config_hash
 
 REPO = DEFAULT_CONFIG_DIR.parent
 SWEEP_Z = (2.5, 3.0, 3.5, 4.0)
@@ -35,9 +38,10 @@ def _family_or_field(a: Alert) -> str:
 def _sweep(prepared: Sequence[DayInputs], ctx: Context, z: float) -> list[Alert]:
     cfg = copy.deepcopy(ctx.cfg)
     cfg["d1_volume_surge"]["min_z"] = z
+    provenance = (effective_config_hash(cfg), code_version())
     alerts: list[Alert] = []
     for inputs in prepared:
-        alerts += detect_day(inputs, cfg, ctx.events, recent=alerts[-200:])
+        alerts += detect_day(inputs, cfg, ctx.events, alerts[-200:], provenance)
     return alerts
 
 
@@ -63,9 +67,13 @@ def truth_metrics(alerts: Sequence[Alert], periods: Sequence[Mapping[str, Any]])
     return f"precision {precision:.0%}, recall {recall:.0%}"
 
 
-def write_alerts(path: Path, alerts: Sequence[Alert]) -> None:
+def write_retrospective(path: Path, alerts: Sequence[Alert]) -> None:
+    """Would-have-fired alerts for review. Never read back as alerts and never posted."""
     rows = [
         {
+            "retrospective": True,
+            "config_hash": a.config_hash,
+            "code_version": a.code_version,
             **{k: getattr(a, k) for k in ("alert_id", "detector", "region", "severity", "status")},
             "window_start": a.window_start,
             "window_end": a.window_end,
@@ -88,6 +96,8 @@ def report(
     sweep: Mapping[float, Sequence[Alert]],
     periods: Sequence[Mapping[str, Any]],
     base_z: float,
+    prepared: Sequence[DayInputs] = (),
+    config: str = "",
 ) -> str:
     weeks = max(1.0, len(days) / 7)
     live = [a for a in alerts if a.status != "suppressed"]
@@ -99,8 +109,11 @@ def report(
         f"- Days: {len(days)} ({len(missing)} without data: "
         f"{', '.join(map(str, missing)) or 'none'})",
         f"- Config hash: `{config_hash()}`; D1 min_z {base_z}",
-        "- Retrospective: no alerts stored, nothing posted. Each day uses the baseline as of that "
-        "day.",
+        "- Retrospective: nothing written to the alert store, nothing posted. Each day uses the "
+        "baseline snapshot as of that day (snapshots are write-once).",
+        f"- Snapshots built with a different config than this run: "
+        f"{sum(p.baseline_config_hash != config for p in prepared)} of {len(prepared)} days "
+        "(rebuild with `--rebuild-baselines` after a config change)",
         f"- Region status: {', '.join(sorted(set(statuses.values())))} "
         "(only `alerting` regions would feed the post queue)",
         "",
@@ -113,7 +126,7 @@ def report(
     for (det, sev), n in sorted(by_sev.items()):
         out.append(f"| {det} {sev} | {n} | {n / weeks:.1f} |")
     out.append(f"| suppressed by guards | {len(suppressed)} | {len(suppressed) / weeks:.1f} |")
-    reasons = Counter(a.evidence.get("suppressed_by") for a in suppressed)
+    reasons = Counter(r for a in suppressed for r in a.evidence.get("suppressed_by", []))
     out += [
         "",
         "Suppressed by: " + (", ".join(f"{k} {v}" for k, v in sorted(reasons.items())) or "none"),
@@ -200,15 +213,26 @@ def report(
     return "\n".join(out)
 
 
-def run_backtest(days: Sequence[date], data_dir: Path, out_dir: Path) -> tuple[Path, list[Alert]]:
-    ctx = Context(data_dir)
+def run_backtest(
+    days: Sequence[date], data_dir: Path, out_dir: Path, rebuild_baselines: bool = False
+) -> tuple[Path, list[Alert]]:
+    ctx = Context(data_dir, rebuild_baselines=rebuild_baselines)
     alerts, missing, prepared = run_days(days, ctx)
     sweep = {z: _sweep(prepared, ctx, z) for z in SWEEP_Z}
     periods = load_truth_set()
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"backtest_{days[-1].isoformat()}.md"
     path.write_text(
-        report(days, alerts, missing, sweep, periods, float(ctx.cfg["d1_volume_surge"]["min_z"]))
+        report(
+            days,
+            alerts,
+            missing,
+            sweep,
+            periods,
+            float(ctx.cfg["d1_volume_surge"]["min_z"]),
+            prepared,
+            ctx.provenance[0],
+        )
     )
-    write_alerts(out_dir / f"backtest_{days[-1].isoformat()}_alerts.parquet", alerts)
+    write_retrospective(out_dir / f"backtest_{days[-1].isoformat()}_retrospective.parquet", alerts)
     return path, alerts

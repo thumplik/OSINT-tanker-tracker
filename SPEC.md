@@ -168,7 +168,7 @@ Every detector is a pure function: `(window_data, baseline, config) -> list[Aler
 
 - **Coverage guard**: suppress if regional total traffic is below 60% or above 167% of its own weekday baseline (the upper bound added Oct 2026, after Gulf days at 5-7x). Fewer receivers means fake drops; recovered receivers mean fake surges. A region with no coverage baseline cannot be checked and is suppressed. Suppressed alerts keep their record and reason.
 - **Exercise calendar**: optional `config/known_events.yaml` (announced exercises, air shows). Matching alerts are downgraded and labeled, not hidden.
-- **Cooldown**: same detector + region cannot alert again within 12h unless severity rises.
+- **Cooldown**: same detector + region cannot alert again within 12h unless severity rises. This includes alerts from the same run: the strongest (severity, then score) is kept and the rest are suppressed on the record.
 
 ### Composite scoring
 
@@ -219,7 +219,9 @@ Pick any past date (or date range) and see the system exactly as it would have l
 - Baselines are stored as dated snapshots (`baselines/<table>/as_of=YYYY-MM-DD/`), built from days before the snapshot date only. Viewing a past day always uses the snapshot from that day, never today's baseline. This prevents future data leaking into the past.
 - The hex → type registry (§3) is stored per day (`registry/date=YYYY-MM-DD/`). A day's untyped hexes are resolved only from registry entries dated that day or earlier.
 - Historical alerts are shown exactly as they were created (status, wording, draft). Retrospective re-runs are a separate, clearly labeled layer and never overwrite them.
-- Every detector and baseline run records its config hash and code version, so a past alert can be reproduced.
+- Every detector and baseline run records its config hash and code version, so a past alert can be reproduced. The hash covers the effective settings of the run, not just the files on disk.
+- Baseline snapshots are write-once: replaying a past day reuses its snapshot even if older data was backfilled since. Rebuilding is an explicit choice (`--rebuild-baselines`), e.g. after a config change; the backtest report counts snapshots built under a different config.
+- The coverage guard checks every day an alert rests on (for D2, each day an arrival in its window landed), not only the last day.
 
 ### Storage and API
 

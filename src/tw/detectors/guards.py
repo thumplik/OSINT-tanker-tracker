@@ -1,43 +1,56 @@
 """Always-on guards (SPEC §8). Each takes alerts and returns new alerts; nothing is dropped:
-suppressed alerts keep their record with the reason in `evidence`."""
+suppressed alerts keep their record, with every reason listed in `evidence["suppressed_by"]`."""
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import date, timedelta
 from typing import Any
 
-from tw.detectors.types import SEVERITIES, Alert, KeyBaseline, downgrade
+from tw.detectors.types import SEVERITIES, Alert, KeyBaseline, downgrade, finite
 
 
 def _suppress(alert: Alert, reason: str, **detail: Any) -> Alert:
-    return replace(
-        alert, status="suppressed", evidence={**alert.evidence, "suppressed_by": reason, **detail}
-    )
+    """Mark suppressed, adding `reason` to any earlier ones (all reasons stay on the record)."""
+    reasons = [*alert.evidence.get("suppressed_by", []), reason]
+    evidence = {**alert.evidence, **detail, "suppressed_by": reasons}
+    return replace(alert, status="suppressed", evidence=evidence)
 
 
 def apply_coverage_guard(
     alerts: Sequence[Alert],
-    coverage: Mapping[str, float],
-    coverage_baseline: Mapping[str, KeyBaseline],
+    coverage_by_day: Mapping[date, Mapping[str, float]],
+    coverage_baseline: Mapping[tuple[str, int], KeyBaseline],
     cfg: Mapping[str, Any],
 ) -> list[Alert]:
-    """Suppress when the region's total traffic is outside [`coverage_min_ratio`,
-    `coverage_max_ratio`] of its weekday median, or when there is no coverage baseline."""
+    """Suppress when, on any day the alert rests on (`basis_days`), the region's total traffic
+    is outside [`coverage_min_ratio`, `coverage_max_ratio`] of that weekday's median, or can't
+    be compared (no baseline, non-finite values). Bounds compare the exact ratio."""
     floor = float(cfg["guards"]["coverage_min_ratio"])
     ceiling = float(cfg["guards"]["coverage_max_ratio"])
     out = []
     for a in alerts:
-        bl = coverage_baseline.get(a.region)
-        if bl is None or bl.median <= 0:
+        days = a.basis_days or ((a.window_end - timedelta(microseconds=1)).date(),)
+        ratios: list[float] = []
+        comparable = True
+        for d in days:
+            bl = coverage_baseline.get((a.region, d.weekday()))
+            observed = coverage_by_day.get(d, {}).get(a.region, 0.0)
+            if bl is None or not finite(bl.median, observed) or bl.median <= 0:
+                comparable = False
+                break
+            ratios.append(observed / bl.median)
+        if not comparable:
             out.append(_suppress(a, "coverage", coverage_ratio=None))
             continue
-        ratio = round(coverage.get(a.region, 0.0) / bl.median, 3)
-        if ratio < floor or ratio > ceiling:
-            out.append(_suppress(a, "coverage", coverage_ratio=ratio))
+        worst = max(ratios, key=lambda r: max(floor / r if r > 0 else math.inf, r / ceiling))
+        shown = round(worst, 3)
+        if worst < floor or worst > ceiling:
+            out.append(_suppress(a, "coverage", coverage_ratio=shown))
         else:
-            out.append(replace(a, evidence={**a.evidence, "coverage_ratio": ratio}))
+            out.append(replace(a, evidence={**a.evidence, "coverage_ratio": shown}))
     return out
 
 
@@ -74,19 +87,34 @@ def apply_cooldown(
     alerts: Sequence[Alert], recent: Sequence[Alert], cfg: Mapping[str, Any]
 ) -> list[Alert]:
     """Suppress a repeat of the same detector and region within `cooldown_hours` of an earlier
-    unsuppressed alert, unless its severity is higher."""
+    unsuppressed alert, unless its severity is higher. Alerts in this batch count too: the
+    strongest (severity, then score, then id) is kept and the rest are repeats. Output keeps
+    the input order."""
     window = timedelta(hours=float(cfg["guards"]["cooldown_hours"]))
-    out = []
-    for a in alerts:
-        blocking = [
-            r
-            for r in recent
-            if r.alert_id != a.alert_id
-            and r.status != "suppressed"
-            and r.detector == a.detector
-            and r.region == a.region
-            and timedelta(0) <= a.created_at - r.created_at <= window
-            and SEVERITIES.index(a.severity) <= SEVERITIES.index(r.severity)
-        ]
-        out.append(_suppress(a, "cooldown", after=blocking[0].alert_id) if blocking else a)
-    return out
+    history = [r for r in recent if r.status != "suppressed"]
+    order = sorted(
+        range(len(alerts)),
+        key=lambda i: (-SEVERITIES.index(alerts[i].severity), -alerts[i].score, alerts[i].alert_id),
+    )
+    out: dict[int, Alert] = {}
+    for i in order:
+        a = alerts[i]
+        blocking = next(
+            (
+                r
+                for r in history
+                if r.alert_id != a.alert_id
+                and r.detector == a.detector
+                and r.region == a.region
+                and timedelta(0) <= a.created_at - r.created_at <= window
+                and SEVERITIES.index(a.severity) <= SEVERITIES.index(r.severity)
+            ),
+            None,
+        )
+        if blocking is not None:
+            out[i] = _suppress(a, "cooldown", after=blocking.alert_id)
+        else:
+            out[i] = a
+            if a.status != "suppressed":
+                history.append(a)
+    return [out[i] for i in range(len(alerts))]

@@ -22,8 +22,8 @@ def detect_d2(
     cfg: Mapping[str, Any],
 ) -> list[Alert]:
     """`arrivals`: closed sorties arriving in the window ending with `day`. `baseline`: distinct
-    aircraft per (airfield, family) seen before the window. `history_days`: days of data behind
-    the baseline (missing days excluded)."""
+    aircraft per (airfield, family) seen before the window. `history_days`: days with data in
+    that same pre-window interval (missing days excluded)."""
     rules = cfg["d2_novel_destination"]
     if history_days < int(cfg["baseline"]["min_history_days"]):
         return []
@@ -53,6 +53,7 @@ def detect_d2(
                 evidence={"family": family, "airfield": field, "hexes": sorted(hexes)},
                 sortie_ids=tuple(sorted(a.sortie_id for a in group)),
                 created_at=end,
+                basis_days=tuple(sorted({a.day for a in group})),
             )
         )
     return alerts

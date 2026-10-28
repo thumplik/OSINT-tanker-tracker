@@ -35,6 +35,9 @@ d1_volume_surge:
   min_z: 3.0
   min_count: 6
   min_coverage_normalized_ratio: 1.5
+  # (observed / max(median, this)) / coverage ratio: a median of 0 is treated as this, so a key
+  # never seen before is compared with one sortie a day rather than divided by zero.
+  normalization_median_floor: 1.0
 
 d2_novel_destination:
   window_hours: 72
