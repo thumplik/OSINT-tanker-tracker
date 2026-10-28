@@ -326,7 +326,8 @@ class Worker:
         sched.add_job(
             self.guarded("heartbeat", self.heartbeat), "interval", seconds=c.heartbeat_seconds
         )
-        signal.signal(signal.SIGTERM, lambda *_: sched.shutdown(wait=False))
+        for sig in (signal.SIGTERM, signal.SIGHUP):  # kill, or the terminal closing
+            signal.signal(sig, lambda *_: sched.shutdown(wait=False))
         now = datetime.now(UTC)
         log_event(self.data_dir, now, "start", first_start=self.first_start(now))
         try:

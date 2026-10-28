@@ -237,7 +237,11 @@ def cmd_worker(args: argparse.Namespace) -> int:
     --once: one poll, flush and provisional run, for a smoke test."""
     import logging
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)sZ %(levelname)s %(name)s %(message)s"
+    )
+    logging.Formatter.converter = time.gmtime  # UTC everywhere, logs included
+    logging.getLogger("apscheduler").setLevel(logging.WARNING)  # not one line per poll
     worker = _build_worker()
     if not args.once:
         worker.run()
