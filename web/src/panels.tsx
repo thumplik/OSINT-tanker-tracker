@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import type { AlertRow, DayView, SiteMeta, SortieRow } from "./types";
+import { byLabel, route, TYPE_LABEL } from "./theater";
+import type { AlertRow, DayView, Judged, SiteMeta, SortieRow } from "./types";
 import {
   alertNumbers,
   alertTitle,
@@ -32,6 +33,9 @@ function AlertCard({
           {SEVERITY_LABEL[a.severity] ?? a.severity}
         </span>
         <span className="det">{a.detector}</span>
+        {typeof a.evidence.family === "string" && (
+          <span className="badge small">{familyLabel(a.evidence.family)}</span>
+        )}
         {a.tier === "provisional" && <span className="badge provisional small">provisional</span>}
         {suppressed && <span className="muted small">suppressed: {by.join(", ") || "guard"}</span>}
       </header>
@@ -84,29 +88,41 @@ export function bySeverity(rows: AlertRow[]): AlertRow[] {
   );
 }
 
+/** Alerts of one family ("all": every family). Families are never mixed in one count. */
+export function forFamily(rows: AlertRow[], family: string): AlertRow[] {
+  return family === "all" ? rows : rows.filter((a) => a.evidence.family === family);
+}
+
 export function AlertsPanel({
   view,
   meta,
+  family,
 }: {
   view: DayView;
   meta: SiteMeta | null;
+  family: string;
 }) {
   const [showSuppressed, setShowSuppressed] = useState(false);
   const sorties = useMemo(() => new Map(view.sorties.map((s) => [s.sortie_id, s])), [view]);
-  const official = bySeverity(view.alerts.filter((a) => a.tier === "official"));
-  const provisional = bySeverity(view.alerts.filter((a) => a.tier === "provisional"));
+  const mine = forFamily(view.alerts, family);
+  const official = bySeverity(mine.filter((a) => a.tier === "official"));
+  const provisional = bySeverity(mine.filter((a) => a.tier === "provisional"));
   const visible = (rows: AlertRow[]) =>
     showSuppressed ? rows : rows.filter((a) => a.status !== "suppressed");
-  const hidden = view.alerts.filter((a) => a.status === "suppressed").length;
+  const hidden = mine.filter((a) => a.status === "suppressed").length;
+  const others = view.alerts.length - mine.length;
   const from = meta?.official_alerts_from;
 
   return (
     <div className="alerts">
-      <p className="explain">
-        Alerts compare a day with the same weekday over the previous{" "}
-        {view.meta.baseline_window_days} days. Unusual counts are worth watching; they say nothing
-        about purpose.
-      </p>
+      <details className="about">
+        <summary>How to read this</summary>
+        <p>
+          Alerts compare a day with the same weekday over the previous{" "}
+          {view.meta.baseline_window_days} days. Unusual counts are worth watching; they say nothing
+          about purpose.
+        </p>
+      </details>
       <h2>Official</h2>
       {visible(official).map((a) => (
         <AlertCard key={a.alert_id} a={a} meta={meta} sorties={sorties} />
@@ -117,7 +133,7 @@ export function AlertsPanel({
             ? "The official run happens after the day's history release (around 03:40Z the next day)."
             : from && view.meta.date < from
               ? `No stored alerts: official alerts start on ${from}. Earlier days feed the backtest only.`
-              : "Nothing above normal on this day."}
+              : `Nothing above normal for ${familyLabel(family).toLowerCase()} on this day.`}
         </p>
       )}
       {provisional.length > 0 && (
@@ -129,6 +145,11 @@ export function AlertsPanel({
             <AlertCard key={a.alert_id} a={a} meta={meta} sorties={sorties} />
           ))}
         </>
+      )}
+      {family !== "all" && others > 0 && (
+        <p className="muted small">
+          {others} more for other families: pick them in the family menu.
+        </p>
       )}
       {hidden > 0 && (
         <button className="link" onClick={() => setShowSuppressed(!showSuppressed)}>
@@ -159,11 +180,15 @@ export function RegionsPanel({
   const { coverage_min_ratio: lo, coverage_max_ratio: hi } = view.meta;
   return (
     <div className="regions">
-      <p className="explain">
-        Sorties of {view.meta.min_sortie_minutes}+ minutes touching each region, against the median for this weekday
-        {view.meta.baseline_as_of ? ` (baseline as of ${view.meta.baseline_as_of})` : ""}. Receiver
-        coverage is all aircraft seen, vs usual; far off usual makes counts unreliable.
-      </p>
+      <details className="about">
+        <summary>How to read this</summary>
+        <p>
+          Sorties of {view.meta.min_sortie_minutes}+ minutes touching each region, against the
+          median for this weekday
+          {view.meta.baseline_as_of ? ` (baseline as of ${view.meta.baseline_as_of})` : ""}.
+          Receiver coverage is all aircraft seen, vs usual; far off usual makes counts unreliable.
+        </p>
+      </details>
       {fams.map((f) => (
         <table key={f} className="tbl">
           <caption>{familyLabel(f)}</caption>
@@ -263,7 +288,8 @@ export function SortiesPanel({
         )}
       </div>
       <p className="muted small">
-        {rows.length} sorties{rows.length > MAX_ROWS && `, first ${MAX_ROWS} shown`}. Sorties under{" "}
+        {rows.length} sorties
+        {rows.length > MAX_ROWS && `, first ${MAX_ROWS} shown`}. Sorties under{" "}
         {view.meta.min_sortie_minutes} min are listed but not counted.
       </p>
       <table className="tbl">
@@ -290,6 +316,191 @@ export function SortiesPanel({
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ---- Theaters (CCMDs) ---------------------------------------------------------------------
+
+function Spark({ values, median }: { values: (number | null)[]; median: number | null }) {
+  const w = 120;
+  const h = 28;
+  const nums = values.filter((v): v is number => v !== null);
+  const max = Math.max(1, ...nums, median ?? 0);
+  const x = (i: number) => (i / Math.max(1, values.length - 1)) * w;
+  const y = (v: number) => h - 2 - (v / max) * (h - 4);
+  let d = "";
+  values.forEach((v, i) => {
+    if (v === null) return;
+    d += `${d && values[i - 1] !== null ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`;
+  });
+  return (
+    <svg className="spark" width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
+      {median !== null && (
+        <line x1={0} x2={w} y1={y(median)} y2={y(median)} className="spark-typ" />
+      )}
+      <path d={d} className="spark-line" />
+    </svg>
+  );
+}
+
+function zText(j: { z: number | null }): string {
+  return j.z === null ? "" : ` (z ${j.z > 0 ? "+" : ""}${j.z.toFixed(1)})`;
+}
+
+function Flow({ label, j, minZ }: { label: string; j: Judged | null; minZ: number }) {
+  if (!j) return <span className="muted">{label} –</span>;
+  const hi = j.z !== null && j.z >= minZ;
+  return (
+    <span className={hi ? "flow hi" : "flow"} title={`typical ${j.median ?? "n/a"}${zText(j)}`}>
+      {label} <b>{j.observed}</b>
+      <span className="muted"> /{j.median ?? "–"}</span>
+    </span>
+  );
+}
+
+export function TheatersPanel({
+  view,
+  meta,
+  family,
+  selected,
+  onCcmd,
+}: {
+  view: DayView;
+  meta: SiteMeta | null;
+  family: string;
+  selected: string | null;
+  onCcmd: (id: string | null) => void;
+}) {
+  const th = view.theaters;
+  const [showMoves, setShowMoves] = useState(false);
+  if (!th) return <p className="muted">This day was exported before theater data existed.</p>;
+  const name = (id: string) => regionName(meta, id);
+  const fams = family === "all" ? [...new Set(th.rows.map((r) => r.family))] : [family];
+  const cov = new Map(th.coverage.map((c) => [c.ccmd, c]));
+  const { coverage_min_ratio: lo, coverage_max_ratio: hi, d1_min_z: minZ } = view.meta;
+  const ccmds = meta?.ccmds?.map((c) => c.id) ?? [...new Set(th.rows.map((r) => r.ccmd))];
+  const mine = <T extends { family: string }>(rows: T[]) =>
+    rows.filter((r) => family === "all" || r.family === family);
+  const transits = mine(th.transits).filter((t) => t.dest !== th.home);
+  const enRoute = mine(th.en_route);
+  const moves = mine(th.moves);
+  return (
+    <div className="theaters">
+      <details className="about">
+        <summary>How to read this</summary>
+        <p>
+          Aircraft by combatant command, from where flights start and end (boundaries approximate).
+          "Seen in" counts aircraft whose latest position in the last {th.max_age_days} days was
+          there; aircraft not broadcasting aren't counted, so these are floors. Flows are the last{" "}
+          {th.window_days} days, shown as observed / typical.
+        </p>
+      </details>
+      {!th.window_complete && (
+        <p className="muted small">
+          A day of the {th.window_days}-day window has no data: flows not shown.
+        </p>
+      )}
+      {ccmds.map((c) => {
+        const cv = cov.get(c);
+        const off = cv?.ratio != null && (cv.ratio < lo || cv.ratio > hi);
+        return (
+          <article
+            key={c}
+            className={`card ccmd ${c === selected ? "sel" : ""}`}
+            onClick={() => onCcmd(c === selected ? null : c)}
+          >
+            <header>
+              <h3>{name(c)}</h3>
+              {c === th.home && <span className="muted small">home</span>}
+              {cv?.ratio != null && (
+                <span className={`small ${off ? "warn-text" : "muted"}`}>
+                  coverage {Math.round(cv.ratio * 100)}% of usual
+                  {off ? ": counts unreliable" : ""}
+                </span>
+              )}
+            </header>
+            {fams.map((f) => {
+              const r = th.rows.find((x) => x.ccmd === c && x.family === f);
+              if (!r) return null;
+              const inv = r.inventory;
+              const big = inv.z !== null && Math.abs(inv.z) >= minZ;
+              return (
+                <div key={f} className="trow">
+                  <div className="tfam">{familyLabel(f)}</div>
+                  <div className="tinv">
+                    <span className={big ? "tnum hi" : "tnum"}>{inv.observed}</span>
+                    <span className="muted small">
+                      {" "}
+                      seen · typical {inv.median ?? "–"}
+                      {zText(inv)}
+                    </span>
+                    <div className="muted small">
+                      {byLabel(r.by_type)
+                        .map(([t, n]) => `${n} ${t}`)
+                        .join(" · ") || "none"}
+                    </div>
+                  </div>
+                  <Spark values={th.history[`${c}|${f}`] ?? []} median={inv.median} />
+                  <div className="tflows small">
+                    <Flow label="in" j={r.entries} minZ={minZ} />
+                    <Flow label="out" j={r.exits} minZ={minZ} />
+                    {c !== th.home && <Flow label="from US" j={r.transits} minZ={minZ} />}
+                  </div>
+                </div>
+              );
+            })}
+          </article>
+        );
+      })}
+
+      <h2>Transits from the US, last {th.window_days} days</h2>
+      {transits.length === 0 && <p className="muted">None resolved.</p>}
+      <ul className="ids">
+        {transits.map((t) => (
+          <li key={`${t.hex}-${t.depart_ts}`}>
+            <b>{t.hex}</b> {TYPE_LABEL[t.type] ?? t.type} → {route(t, name)}
+            {t.dest_airfield && ` (${t.dest_airfield})`}{" "}
+            <span className="muted">
+              left {utc(t.depart_ts).slice(5)}, {t.resolution === "returned" ? "back" : "stayed"}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {enRoute.length > 0 && (
+        <>
+          <h2>Away from the US, not settled yet</h2>
+          <ul className="ids">
+            {enRoute.map((t) => (
+              <li key={`${t.hex}-${t.depart_ts}`}>
+                <b>{t.hex}</b> {TYPE_LABEL[t.type] ?? t.type} farthest so far {route(t, name)}{" "}
+                <span className="muted">left {utc(t.depart_ts).slice(5)}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <button className="link" onClick={() => setShowMoves(!showMoves)}>
+        {showMoves ? "Hide" : "Show"} {moves.length} CCMD changes on this day
+      </button>
+      {showMoves && (
+        <ul className="ids">
+          {moves.map((m) => (
+            <li key={`${m.hex}-${m.ts}`}>
+              {hhmm(m.ts)} <b>{m.hex}</b> {TYPE_LABEL[m.type] ?? m.type} {name(m.src)} →{" "}
+              {name(m.dst)}
+              {m.dst_airfield && ` (${m.dst_airfield})`}{" "}
+              <span className="muted">
+                {m.quality === "ground"
+                  ? "landed"
+                  : m.quality === "aloft"
+                    ? "lost from view"
+                    : "airborne"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

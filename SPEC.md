@@ -125,6 +125,13 @@ Live data never enters the official `points/`/`sorties/` datasets: each official
 
 **Coverage**: per H3 r4 cell per hour, count of *all* aircraft seen (civil included). This is the denominator that separates real surges from receiver coverage changes.
 
+**Fix, presence, move, transit** (theater layer, M5c; `src/tw/theater/`, thresholds in `detectors.yaml → theater:`):
+- A **fix** is where a counted sortie (≥ `counting.min_sortie_minutes`) starts or ends, mapped to a combatant command (§6). Its quality is `ground` (start/end seen low), `aloft` (lost from view in the air: about 80% of arrivals into CENTCOM end this way) or `last_seen` (still airborne). The track in between is never used, so overflying a CCMD is not entering it.
+- **Inventory** ("seen in"): aircraft per (CCMD, family, type) whose latest fix in the last `max_age_days` (14) is in that CCMD at the end of the day. It is visible inventory, a floor: aircraft that don't broadcast are not counted.
+- A **move** is a change of CCMD between consecutive fixes of one aircraft: an exit from one and an entry to the other, on the day of the arriving fix. An aircraft's first fix in the lookback is not a move.
+- A **transit from home** starts at the last fix in `ccmds.yaml → home` (NORTHCOM). Its destination is the CCMD of the fix farthest from that departure; earlier stops are `via`. It resolves when the aircraft is back home, or after it has stayed `dwell_hours` (48) in one CCMD, and counts on the day it resolves. A tanker staging in Europe for days before going on to CENTCOM is therefore a transit to EUCOM, then a EUCOM → CENTCOM move.
+- Day D uses sorties dated D - `lookback_days` .. D only, with no carried state (point-in-time by construction). Stored as `aggregates/ccmd_inventory|ccmd_moves|ccmd_transits|ccmd_coverage/date=D`; `tw build-theater` backfills them.
+
 **Alert**: `alert_id, detector, region, window, observed, expected, score, severity, evidence{}, sortie_ids[], created_at, status (new|approved|rejected|posted|suppressed), post_draft, chart_path`
 
 Stored in two places: `alerts/date=D/` (official, write-once; the only source for the post queue) and `provisional_alerts/date=D/part-HH` (live rolling windows, `evidence.tier = provisional`; never queued or posted).
@@ -144,6 +151,10 @@ Every region starts as `watch`. Promotion to `alerting` is a manual config chang
 
 Heat maps use r4 (regional view) and r6 (local view).
 
+### Combatant commands (M5c)
+
+`config/ccmds.yaml` maps positions to the six geographic CCMDs (NORTHCOM, EUCOM, CENTCOM, AFRICOM, SOUTHCOM, INDOPACOM) with ordered polygons, first match wins, following the Unified Command Plan as publicly described (Greenland in NORTHCOM since 2025-06-17; Israel and Egypt in CENTCOM; Hawaii in INDOPACOM). No official boundary file exists, so the polygons are approximate; a list of pinned airfields (Ramstein, Al Udeid, Djibouti, Diego Garcia, Pituffik, Guantanamo, ...) is asserted by a test. CCMDs carry the same `watch | alerting` status as regions, all `watch`; promotion is a manual edit. Coverage per CCMD is the region coverage summed by the CCMD of each r4 cell centre.
+
 ## 7. Baselines
 
 ### How "abnormal" is defined
@@ -161,6 +172,7 @@ For each key, an alert requires all four of:
 
 - Rebuilt nightly from a trailing 56-day window (configurable)
 - Keyed by `(region, family, day_of_week)` and, where needed, `(airfield, family)` and `(route, family)`
+- Theater flows (M5c) are too sparse for weekday keys: `baselines/ccmd/as_of=D` holds, per (CCMD, family), the median/MAD of up to `baseline_blocks` (8) earlier non-overlapping `flow_window_days` (7) sums of entries, exits and transits from home (only complete windows; at least `min_blocks` (4) to judge), and of daily inventory over the baseline window leaving out the current flow window, so a build-up is not absorbed into its own baseline. CCMD coverage is per weekday, as for regions.
 - Inputs are per-day aggregates (`aggregates/*/date=D/`). A sortie counts once in **every region it flies in** (any of its H3 r4 cells), and sorties shorter than `counting.min_sortie_minutes` (30) don't count (both decided Oct 2026). Days without data are skipped, never zero.
 - Official runs evaluate whole UTC days (window end = midnight). The M4 worker's provisional tier evaluates rolling windows of the same length (`window_hours`) ending on each hour, with the same counting and detectors, against the latest official snapshot (as_of ≤ the window's end date), compared on the weekday of the window's midpoint. It never builds a snapshot: one built before the previous day's release is loaded would miss that day for good.
 - Robust statistics: median and MAD. No means/standard deviations on sparse counts.
@@ -177,12 +189,14 @@ Every detector is a pure function: `(window_data, baseline, config) -> list[Aler
 | D3 | Unusual orbit | Tanker orbit-hours (cumulative heading change ≥ 720° within 40 km radius) in an r4 cell above that cell's baseline p95 |
 | D4 | Airlift convergence | ≥ N distinct strategic-airlift hexes arriving at one airfield or region within 48h, robust z ≥ 3.0 |
 | D5 | Route shift | Share of a family's sorties on a route pair departs from baseline share by ≥ X points over 72h |
+| D6 | Flow change (M5c) | 7-day entries into, exits from, or transits from home to a CCMD × family: robust z ≥ 3.0 **and** count ≥ `min_count` **and** the coverage-normalized ratio also exceeds threshold (as D1) |
+| D7 | Inventory shift (M5c) | Aircraft of a family seen in a CCMD vs its baseline, either direction: \|z\| ≥ 3.0 **and** change ≥ `min_change` aircraft **and** ≥ `min_rel_change` of normal. Coverage-checked on every day of the flow window |
 
 ### Guards (always on)
 
 - **Coverage guard**: suppress if regional total traffic is below 60% or above 167% of its own weekday baseline (the upper bound added Oct 2026, after Gulf days at 5-7x). Fewer receivers means fake drops; recovered receivers mean fake surges. A region with no coverage baseline cannot be checked and is suppressed. Suppressed alerts keep their record and reason.
 - **Exercise calendar**: optional `config/known_events.yaml` (announced exercises, air shows). Matching alerts are downgraded and labeled, not hidden.
-- **Cooldown**: same detector + region cannot alert again within 12h unless severity rises. This includes alerts from the same run: the strongest (severity, then score) is kept and the rest are suppressed on the record.
+- **Cooldown**: same detector + region + family (+ flow series for D6) cannot alert again within 12h (72h for D6/D7, `cooldown_hours_by_detector`) unless severity rises. A tanker alert never silences an airlift one (decided Oct 2026: keyed by region only, 46% of cooldown suppressions in the backtest were one family silencing another). This includes alerts from the same run: the strongest (severity, then score) is kept and the rest are suppressed on the record.
 
 ### Two tiers (decided Oct 2026)
 
@@ -190,6 +204,8 @@ Every detector is a pure function: `(window_data, baseline, config) -> list[Aler
 - **Provisional**: hourly rolling windows on live `/v2/mil` data. The live feed has no civil traffic, so the coverage guard cannot run; these alerts skip only that guard, carry `coverage: unchecked`, and never go to the post queue. The worker report compares them with the official run.
 
 ### Composite scoring
+
+Unlike the cooldown, composite scoring merges across families on purpose: a tanker surge and an airlift convergence in one region is the co-occurrence it looks for.
 
 Alerts in the same region within 24h merge into one event. Severity: `low` (one detector), `medium` (two detectors or z ≥ 4), `high` (three or more detectors). Only medium and high go to the post queue by default.
 
@@ -213,12 +229,21 @@ Alerts in the same region within 24h merge into one event. Severity: `low` (one 
 
 ## 10. Dashboard views
 
+0. **Overview** (M5d, the front page): one family, one day, three questions in order.
+   - *What stands out*: the day's stored official alerts once the official run exists for it; before that (history, or today's live data) the **indicators**: D1, D6 and D7 plus the coverage guard run on that day's inputs for the page (`views/indicators.py`), labeled as such, never stored or posted. Guard-suppressed items are listed separately as "held back", with the coverage ratio. D2 isn't re-run.
+   - *Where they are*: aircraft (`theaters.positions`, the fixes the inventory counts) are grouped by where they were last seen. On the ground at an airfield: one marker per airfield sized by aircraft. Lost from view in the air: credited to the airfield their last flight left (`from_airfield`: the sortie's origin, else the last airfield the aircraft was seen on the ground at in the lookback), drawn as a ring there. Only aircraft still airborne are individual dots. Clicking an airfield lists its aircraft (callsign, type, hex linked to a public tracker, landed / left / last seen times). Aircraft with no known departure, or on the ground away from any airfield, are listed, not drawn. Below: aircraft last seen per CCMD vs typical.
+   - *Over time*: the family's total seen and each CCMD's, daily over `dashboard.history_days` (180), with the typical line; clicking a CCMD selects it everywhere.
+   - *Airfields* tab: a card per airfield with aircraft of the family (`theaters.airfield_stats`): on the ground today, with the previous `baseline.window_days` of the daily on-ground count (avg, min, max, chart; flagged when today is outside that range), and aircraft whose last flight left there, airborne or not seen since. From `aggregates/airfield_presence` (per day, built with the theater aggregates; `tw build-theater` backfills days built before it). Sort, search, filter by CCMD; a card opens the airfield's aircraft list.
+   The heat map is the map's "Activity" mode; region boxes show only on the Regions and Flights tabs.
 1. **Heat map**: H3 hexes by family and time range, with a baseline-difference toggle (observed minus expected).
 2. **Alert feed**: cards with evidence, sortie list and approve/reject.
 3. **Airfield board**: arrivals and departures by family, sparklines vs baseline.
 4. **Sortie inspector**: track replay for any sortie.
 5. **Coverage panel**: receiver coverage health by region.
 6. **Date picker + time scrubber**: present on every view; switches the whole dashboard to a past day (see §11).
+7. **Theaters** (M5c): per CCMD and family, aircraft seen (by type) vs typical with a 56-day sparkline, 7-day entries/exits/transits from the US vs typical, CCMD coverage; transits from the US (destination, via), aircraft away and not settled, the day's CCMD changes. The map shows the CCMDs (H3 res-2 cells by centre) and arcs from home to each destination.
+
+Every view shows one family at a time by default (tankers); "all tracked (mixed)" is an explicit choice.
 
 ## 11. Historical view ("time travel")
 
@@ -230,7 +255,7 @@ Pick any past date (or date range) and see the system exactly as it would have l
 - **Playback**: a time scrubber replays that day's tracks (1×, 10×, 60×, 600×), with sorties appearing and disappearing on the map.
 - **Then vs. normal**: every count shows the baseline *as it stood on that date*, so "unusual for then" is judged honestly.
 - **Compare**: pick two dates (or a date vs. its baseline) for side-by-side or difference heat maps.
-- **Alert re-run**: "What would have fired?" runs the current detectors over the past day without saving or posting anything. Results are labeled as retrospective.
+- **Alert re-run**: "What would have fired?" runs the current detectors over the past day without saving or posting anything. Results are labeled as retrospective. (M5d: the Overview's indicators do this for D1, D6 and D7 at export time.)
 - **Shareable links**: every view encodes its state in the URL (`?date=2026-06-14&t=1430Z&family=tanker&region=med`).
 
 ### Point-in-time correctness (non-negotiable)
@@ -305,6 +330,8 @@ Rules for every ML stage:
 | M4 | Live ingest worker | Runs 72h unattended; rate limits respected (both read off `tw worker-report`, from the worker's request log) |
 | M5 | Dashboard (heat map, alert feed) with date picker | Usable on desktop and phone; any backfilled day loads in < 1 s. Heat-map baseline difference, airfield board and coverage map move to M5b (they need a per-hex baseline) |
 | M5b | Playback, compare mode, retrospective alert re-run | Scrub a full day smoothly; point-in-time test passes |
+| M5c | Families kept apart; theater layer (CCMD inventory, entries/exits, transits from home), D6/D7, Theaters tab | Backtest reviewed; point-in-time tests pass |
+| M5d | Overview front page: what stands out (alerts or indicators), aircraft by airfield, 180-day trends; airfield cards | An analyst can answer "anything unusual, where are they, vs normal" without leaving the first screen, on desktop and phone |
 | M6 | D3–D5, composite scoring | Backtest precision reviewed |
 | M7 | Publisher with approval queue | First approved post goes out |
 | M8 | Truth set + threshold sweep report | 20+ labeled periods; thresholds chosen from the sweep |

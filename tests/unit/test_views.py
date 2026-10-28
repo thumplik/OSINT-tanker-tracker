@@ -162,3 +162,85 @@ def test_site_meta_lists_regions_families_and_attribution(tmp_path):
     assert meta["regions"][-1]["id"] == "other"
     assert "C17" in meta["families"]["strategic_airlift"]
     assert any("ODbL" in a for a in meta["attribution"])
+
+
+def theater_history(root: Path, tankers: int = 9) -> None:
+    """history() with D's theater aggregates and snapshot, plus two C-17s from Dover into Al
+    Udeid on D (another family than the Europe tankers)."""
+    history(root)
+    for day in days_between(D - timedelta(days=56), D - timedelta(days=1)):
+        assert Context(root).build_theater(day)
+    rows = [sortie(D, i, dest="ETAR") for i in range(tankers)] + [
+        {
+            **sortie(D, 50 + i, dest="OTBH", end=(25.12, 51.32), hex_code=f"ae0c1{i}"),
+            "type": "C17",
+            "families": ["strategic_airlift"],
+            "start_lat": 39.13,
+            "start_lon": -75.47,
+            "origin_icao": "KDOV",
+        }
+        for i in range(2)
+    ]
+    store_day(root, D, rows)
+    ctx = Context(root)
+    assert ctx.build_theater(D) and ctx.build_aggregates(D)
+
+
+def test_theaters_keep_families_apart_and_judge_against_the_snapshot(tmp_path):
+    theater_history(tmp_path)
+    from tw.pipeline import prepare_theater
+
+    assert prepare_theater(D, Context(tmp_path)) is not None  # builds the snapshot
+    th = day_view(ViewContext(tmp_path), D, NOW)["theaters"]
+    rows = {(r["ccmd"], r["family"]): r for r in th["rows"]}
+    tankers, airlift = rows[("eucom", "tanker")], rows[("centcom", "strategic_airlift")]
+    assert tankers["inventory"]["observed"] == 9 and tankers["by_type"] == {"K35R": 9}
+    assert tankers["inventory"]["median"] == 5.0 and tankers["inventory"]["z"] > 0
+    assert airlift["inventory"]["observed"] == 2 and airlift["by_type"] == {"C17": 2}
+    assert rows[("centcom", "tanker")]["inventory"]["observed"] == 0
+    assert airlift["entries"]["observed"] == 2  # one exit from NORTHCOM, one entry, per flight
+    assert rows[("northcom", "strategic_airlift")]["exits"]["observed"] == 2
+    assert [(m["src"], m["dst"]) for m in th["moves"]] == [("northcom", "centcom")] * 2
+    assert len(th["history"]["eucom|tanker"]) == 180 and th["history"]["eucom|tanker"][-1] == 9
+    assert th["history"]["eucom|tanker"][0] is None  # before the data: missing, never zero
+    spots = {(p["ccmd"], p["family"]): p for p in th["positions"]}
+    assert len(th["positions"]) == 11
+    c17 = spots[("centcom", "strategic_airlift")]
+    assert (c17["airfield"], c17["from_airfield"], c17["quality"]) == ("OTBH", "KDOV", "ground")
+    assert c17["departed"] < c17["ts"]
+    assert th["airfields"]["OTBH"]["ccmd"] == "centcom"  # every named airfield is described
+    assert {p["airfield"] for p in th["positions"]} | {"KDOV"} <= set(th["airfields"])
+    assert th["window_complete"] and th["baseline_as_of"] == D.isoformat()
+    card = {(r["airfield"], r["family"]): r for r in th["airfield_stats"]}[("ETAR", "tanker")]
+    assert card["ground"] == 9 and card["days"] == 56 and len(card["series"]) == 56
+    assert card["min"] <= card["mean"] <= card["max"]
+    dover = {(r["airfield"], r["family"]): r for r in th["airfield_stats"]}
+    assert ("KDOV", "strategic_airlift") not in dover  # both C-17s landed: nothing pending there
+    assert set(card) >= {"min", "max", "mean"} and "ETAR" in th["airfields"]
+
+
+def test_theaters_ignore_later_data(tmp_path):
+    theater_history(tmp_path)
+    before = day_view(ViewContext(tmp_path), D, NOW)["theaters"]
+    later = D + timedelta(days=1)
+    store_day(
+        tmp_path, later, [sortie(later, i, dest="ETAR", hex_code=f"af{i:04x}") for i in range(30)]
+    )
+    assert Context(tmp_path).build_theater(later)
+    assert day_view(ViewContext(tmp_path), D, NOW)["theaters"] == before
+
+
+def test_indicators_run_the_detectors_without_storing_anything(tmp_path):
+    theater_history(tmp_path, tankers=14)
+    from tw.pipeline import prepare_theater
+    from tw.store.alerts import OFFICIAL, read_alerts
+
+    assert prepare_theater(D, Context(tmp_path)) is not None  # builds the snapshot
+    view = day_view(ViewContext(tmp_path), D, NOW)
+    d7 = [a for a in view["indicators"] if a["detector"] == "D7"]
+    assert [(a["region"], a["evidence"]["family"], a["observed"]) for a in d7] == [
+        ("eucom", "tanker", 14)
+    ]
+    assert all(a["tier"] == "indicator" for a in view["indicators"])
+    assert view["alerts"] == [] and read_alerts(tmp_path, OFFICIAL, [D]) == []
+    assert day_view(ViewContext(tmp_path), D, NOW)["indicators"] == view["indicators"]

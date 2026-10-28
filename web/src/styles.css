@@ -163,6 +163,9 @@ select {
   grid-template-columns: 1fr 400px;
   min-height: 0;
 }
+.body.wide {
+  grid-template-columns: 1fr minmax(400px, 46%); /* room for two or three airfield cards a row */
+}
 .map-col {
   position: relative;
   min-height: 0;
@@ -217,6 +220,7 @@ select {
 }
 .seg {
   display: flex;
+  flex-shrink: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
@@ -482,7 +486,8 @@ tr.faint {
     height: auto;
     min-height: 100dvh;
   }
-  .body {
+  .body,
+  .body.wide {
     grid-template-columns: 1fr;
   }
   .map-col {
@@ -524,5 +529,435 @@ tr.faint {
   }
   .legend {
     min-width: 120px;
+    bottom: 40px; /* clear of the expanded attribution */
   }
+  .map-controls .hint {
+    display: none;
+  }
+  .map-controls {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    padding-bottom: 18px; /* the panel overlaps the map column by 10px */
+  }
+  .map-controls .hour {
+    flex: 1 1 100%;
+  }
+}
+
+/* theaters */
+.card.ccmd {
+  cursor: pointer;
+}
+.card.ccmd.sel {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.trow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "fam fam"
+    "inv spark"
+    "flows flows";
+  gap: 2px 10px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+.tfam {
+  grid-area: fam;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.tinv {
+  grid-area: inv;
+}
+.tnum {
+  font-size: 20px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.tnum.hi {
+  color: var(--accent);
+}
+.spark {
+  grid-area: spark;
+  align-self: center;
+}
+.spark-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+.spark-typ {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+.tflows {
+  grid-area: flows;
+  display: flex;
+  gap: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.flow.hi b {
+  color: var(--accent);
+}
+.warn-text {
+  color: var(--provisional);
+  font-weight: 600;
+}
+
+/* ---- Overview (front page) ---------------------------------------------------------------- */
+.overview section + section {
+  margin-top: 20px;
+}
+.overview h2:first-child {
+  margin-top: 4px;
+}
+.standout {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.so {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.so:hover {
+  background: var(--accent-soft);
+}
+.so-title {
+  font-weight: 600;
+}
+.so-nums {
+  font-variant-numeric: tabular-nums;
+}
+.so-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.standout.held .so {
+  border-left-color: var(--line);
+  opacity: 0.8;
+}
+.calm {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--text-secondary);
+}
+.hero {
+  margin: 4px 0 8px;
+  color: var(--text-secondary);
+}
+.hero b {
+  font-size: 24px;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  margin-right: 2px;
+}
+.tbl.where td.hi {
+  color: var(--text-primary);
+  font-weight: 650;
+}
+.flag {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: 1px;
+}
+.trend {
+  position: relative;
+}
+.trend svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  touch-action: pan-y;
+}
+.trend .series {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.trend .typ {
+  stroke: var(--text-muted);
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+.trend .axis {
+  stroke: var(--line);
+  vector-effect: non-scaling-stroke;
+}
+.trend .cross {
+  stroke: var(--text-muted);
+  vector-effect: non-scaling-stroke;
+}
+.trend .dot {
+  fill: var(--accent);
+  stroke: var(--surface-1);
+  stroke-width: 2;
+}
+.trend .tick {
+  font-size: 9px;
+  fill: var(--text-muted);
+}
+.trend .tip {
+  position: absolute;
+  top: -6px;
+  transform: translateX(-50%);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+.minis {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 10px;
+}
+.mini {
+  display: block;
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px 2px;
+  cursor: pointer;
+}
+.mini.sel {
+  border-color: var(--accent);
+}
+.mini-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.mini-head b {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.mini .tick,
+.mini .tip {
+  display: none;
+}
+.about {
+  margin: 4px 0 8px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+.about summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.overview > .about {
+  margin-top: 20px;
+}
+.pos-legend {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.pt {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+.pt.ground {
+  background: rgb(42 120 214);
+  box-shadow: 0 0 0 1px #fff;
+}
+.pt.ring {
+  border: 1.5px solid rgb(42 120 214 / 0.7);
+}
+.pt.air {
+  width: 8px;
+  height: 8px;
+  background: rgb(235 104 52);
+  box-shadow: 0 0 0 1px #fff;
+}
+
+/* aircraft by airfield */
+.status {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 10px;
+  display: grid;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.card.field header {
+  justify-content: space-between;
+  flex-wrap: nowrap;
+}
+.card.field h4 {
+  margin: 10px 0 2px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+.card.field {
+  scroll-margin-top: 56px; /* clear of the sticky tabs on phones */
+  border-color: var(--accent);
+}
+.hexlink {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--accent);
+}
+.overview h3.sub {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 14px 0 4px;
+}
+
+/* airfield cards ("baseball cards") */
+.bcards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.bcard {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px 8px;
+  cursor: pointer;
+  min-width: 0;
+}
+.bcard:hover {
+  border-color: var(--text-muted);
+}
+.bcard.sel {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.bc-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+}
+.bc-top b {
+  font-size: 15px;
+  letter-spacing: 0.02em;
+}
+.bc-ccmd {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.bc-name {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bc-hero {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 4px;
+}
+.bc-big {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.bc-unit {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.bc-flag {
+  justify-self: start;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+.bc-types {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bc-chart .tick,
+.bc-chart .tip {
+  display: none;
+}
+.bc-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  border-top: 1px solid var(--line);
+  padding-top: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.bc-stats small {
+  display: block;
+  font-size: 9.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.airfields .filters {
+  flex-wrap: wrap;
+}
+.airfields .filters input {
+  flex: 1 1 180px;
+}
+.airfields .filters select {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+.bc-out {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.bc-out b {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.bc-unit {
+  white-space: nowrap;
 }

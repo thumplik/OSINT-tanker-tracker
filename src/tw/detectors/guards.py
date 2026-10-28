@@ -83,14 +83,30 @@ def _as_date(value: Any) -> date:
     return value if isinstance(value, date) else date.fromisoformat(str(value))
 
 
+def cooldown_key(a: Alert) -> tuple[str, ...]:
+    """What makes two alerts repeats of each other: the same detector, region, family (a tanker
+    alert never silences an airlift one) and, for D6, flow series. D2 airfields in one region
+    still share a cooldown: keying by airfield too added ~1.1 D2 alerts a day in the backtest."""
+    return (
+        a.detector,
+        a.region,
+        str(a.evidence.get("family", "")),
+        str(a.evidence.get("series", "")),
+    )
+
+
 def apply_cooldown(
     alerts: Sequence[Alert], recent: Sequence[Alert], cfg: Mapping[str, Any]
 ) -> list[Alert]:
-    """Suppress a repeat of the same detector and region within `cooldown_hours` of an earlier
+    """Suppress a repeat of the same key (`cooldown_key`) within the cooldown of an earlier
     unsuppressed alert, unless its severity is higher. Alerts in this batch count too: the
     strongest (severity, then score, then id) is kept and the rest are repeats. Output keeps
-    the input order."""
-    window = timedelta(hours=float(cfg["guards"]["cooldown_hours"]))
+    the input order.
+
+    The cooldown is `guards.cooldown_hours`, or `guards.cooldown_hours_by_detector[detector]`
+    where set (multi-day windows would otherwise repeat every day)."""
+    hours = float(cfg["guards"]["cooldown_hours"])
+    by_detector = cfg["guards"].get("cooldown_hours_by_detector") or {}
     history = [r for r in recent if r.status != "suppressed"]
     order = sorted(
         range(len(alerts)),
@@ -104,9 +120,10 @@ def apply_cooldown(
                 r
                 for r in history
                 if r.alert_id != a.alert_id
-                and r.detector == a.detector
-                and r.region == a.region
-                and timedelta(0) <= a.created_at - r.created_at <= window
+                and cooldown_key(r) == cooldown_key(a)
+                and timedelta(0)
+                <= a.created_at - r.created_at
+                <= timedelta(hours=float(by_detector.get(a.detector, hours)))
                 and SEVERITIES.index(a.severity) <= SEVERITIES.index(r.severity)
             ),
             None,

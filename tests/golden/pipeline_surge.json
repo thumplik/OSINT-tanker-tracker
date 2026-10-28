@@ -37,5 +37,25 @@
     "score": 2.0,
     "severity": "low",
     "status": "new"
+  },
+  {
+    "day": "2026-08-31",
+    "detector": "D7",
+    "evidence": {
+      "ccmd": true,
+      "coverage_ratio": 1.0,
+      "direction": "up",
+      "family": "tanker",
+      "mad": 0.0,
+      "n_days": 50,
+      "series": "inventory"
+    },
+    "expected": 6.0,
+    "id": "ba48b095a9a2739f",
+    "observed": 14.0,
+    "region": "eucom",
+    "score": 5.396,
+    "severity": "medium",
+    "status": "new"
   }
 ]

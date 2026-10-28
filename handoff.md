@@ -1,59 +1,60 @@
 # Handoff
 
-_Last updated: 2026-10-28_
+_Last updated: 2026-10-28 (M5d)_
 
-## Current milestone: M5 (dashboard), on `m5-dashboard`
-- Worktree: `../tanker-hunt-m5`, based on `m4-live-worker`.
-- M4 is built (PR #2). Its 72 h trial runs from the main checkout until about 2026-10-31
-  03:30 UTC. Don't restart that worker before then.
+## Branches (stacked; nothing merged yet)
+- `m4-live-worker` (PR #2) → `m5-dashboard` (PR #3) → `m5c-theaters` (this work), all in the
+  `../tanker-hunt-m5` worktree. The M4 72 h trial runs from the main checkout until about
+  2026-10-31 03:30 UTC. Don't restart it before then. History 2025-10-27..2026-10-26.
 
-## Data (M1–M3)
-- History 2025-10-27..2026-10-26: 360 days, 65M points, 2.1 GB. KC-46A is typed `B762`; C30J
-  counts as tactical airlift only.
-- M3 backtest: D1 6.2/week, D2 13.3/week. The Gulf tankers 2026-06-22..07-03 were suppressed by
-  coverage. Worth labeling.
+## M5 (dashboard, live)
+- https://tanker-watch-dun.vercel.app (Vercel project `tanker-watch`, root `web/`). Production
+  branch is `m5-dashboard` for now; set it back to `main` after the merges.
+- Blob store `tanker-watch-data` = `VITE_DATA_BASE_URL`; RW token in the main checkout's `.env`.
 
-## M4 (live worker)
-- **Two tiers.**
-  - Provisional: hourly rolling D1/D2 on live `/v2/mil`, stored in `provisional_alerts/`, never
-    queued.
-  - Official: nightly on the release, write-once `alerts/`. Official alerts start at 2026-10-27.
-- adsb.lol returns HTTP 429 at times. The worker fails over to adsb.fi and back every 15 min. Watch
-  for it in the trial report.
+## M5c (theaters; plan approved 2026-10-28)
+- Families kept apart: cooldown keyed by detector + region + family (+ D6 series); D2 over 6
+  months 346 → 452 live alerts (airfield in the key would give 647, so left out).
+- Theater layer (`src/tw/theater/`, `config/ccmds.yaml`, SPEC §5-8): fixes from sortie
+  starts/ends; inventory ("seen in", 14 d), entries/exits, transits from NORTHCOM; write-once
+  `baselines/ccmd`. D6 flow surge, D7 inventory shift; all CCMDs `watch`; official tier only.
+- Full-year backtest `reports/backtest_2026-10-26.md` on the scratch copy
+  `/Volumes/Code/tanker-hunt-m5c-data`: D6 4.8/wk, D7 1.1/wk; CENTCOM tankers fire 2026-02-26.
 
-## M5 (owner decisions 2026-10-28: Vercel + static day files; public)
-- `views/day.py` (point-in-time, never writes) -> `export/` (local or Blob, rate-limited) ->
-  `web/` (Vite/React, MapLibre + deck.gl). Worker `export` job hourly; live only after the trial.
-- Deferred to M5b: per-hex baseline diff toggle, airfield board, playback, compare, re-run.
+## M5d (owner request 2026-10-28: "too much data at first glance")
+- New default tab **Overview**: what stands out → where they are → over time, one family.
+  - Stored official alerts once the run exists for a day; otherwise **indicators** (D1/D6/D7 +
+    coverage guard run at export by `views/indicators.py`, never stored). Suppressed = "held back".
+  - Map groups aircraft by airfield (owner, 2026-10-28): marker = on the ground there, ring =
+    left there then lost from view, dots only for airborne. Click → airfield card. Departure falls
+    back to the last airfield seen on the ground. ~1/4 of lost tankers still have no known origin.
+    No tail numbers in our data; hex links to globe.adsb.lol. Heat map = "Activity" mode.
+  - **Airfields** tab: card per airfield (today vs previous 56 days: avg/min/max/chart; left here
+    airborne / not seen). New daily `aggregates/airfield_presence`; scratch data backfilled with
+    `tw build-theater`. Main data needs the same after the merge (step 4 below covers it).
+  - Trends: `dashboard.history_days: 180` (detectors.yaml, dashboard only). Schema 3.
+- Local export re-done (scratch data); Blob and the live site are still schema 2 until published.
 
-## M5 status
-- Built and checked locally (browser pane, desktop + phone): views + export (14 tests), web app
-  (8 vitest), CI web job. Real day: ~0.15 s to build, ~355 KB JSON + 1.4 MB r6 file.
-- Local loop: `uv run tw export --from .. --to .. --dest local:web/public/data`, then
-  `cd web && npm run dev` (TW_DATA_DIR points at the main checkout's data from the worktree).
-- MapLibre 6 needs `setWorkerUrl(...?worker&url)` under Vite (done in MapView.tsx).
-
-## Vercel (set up 2026-10-28 with the CLI, logged in as thumplik-2699)
-- Site: https://tanker-watch-dun.vercel.app (project `tanker-watch`, root `web/`, team
-  thumplik-2699s-projects). Production branch is `m5-dashboard` for now; set it back to `main`
-  after PRs #2/#3 merge (`vercel api /v9/projects/tanker-watch/branch --method PATCH`).
-- Blob store `tanker-watch-data` (public, iad1): https://pd1haiwyvvtzrh5i.public.blob.vercel-storage.com
-  = `VITE_DATA_BASE_URL` (production + preview). RW token in the main checkout's `.env` (600).
-- Backfill 2026-10-28: 362 days, 517 MB (r6 files ~1.4 MB/day dominate), 378 s. Day file
-  ~25-60 KB brotli: ~80 ms cached, ~0.24 s uncached. Today's file is frozen until the worker
-  restarts with the export job (after the trial) or `tw export --dest blob` is run by hand.
+## Open question (owner)
+- **The coverage guard hides the CENTCOM build-up.**
+  - From 2026-02-27, CENTCOM total traffic was 17-20% of usual (civil traffic gone, likely
+    airspace closures) while visible tankers rose 0 → 24. The guard suppressed every D1/D6/D7
+    there through March.
+  - Proposal: make the guard direction-aware. Low coverage can't create a rise, and high coverage
+    can't create a drop. This changes SPEC §8, so it needs the owner's decision.
 
 ## Next
-- After the trial: `uv run tw worker-report --from 2026-10-28 --to 2026-10-31`. Done if:
-  - no crashes;
-  - longest poll gap < 5 min outside outages;
-  - rate limits respected;
-  - 3 official days loaded.
-- Then run the Codex review of PR #2 and merge; retarget the M5 PR to `main`.
-- Owner: start the truth set (`eval/truth_set.yaml`, 20–40 periods).
+- After the trial:
+  1. Run `uv run tw worker-report --from 2026-10-28 --to 2026-10-31`.
+  2. Run the Codex review of PRs #2, #3 and M5c (detectors/ changed: cooldown, D6, D7).
+  3. Merge in order.
+  4. Run `uv run tw build-theater --from 2025-10-27 --to <yesterday>` on the main data.
+  5. Restart the worker.
+  6. Set the Vercel production branch to `main`.
+- Owner: start the truth set (`eval/truth_set.yaml`, 20-40 periods; CENTCOM Feb-Jul 2026 is a
+  candidate).
 
 ## Open questions
 - airplanes.live API access: register (owner) or drop it.
-- Public dashboard shows provisional alerts, labeled. Hide them if preferred (one flag).
-- If D's release lands after D+1 was already loaded, D+1's sorties aren't rebuilt (rare).
-- Worker host (VPS vs Pi), X account name (SPEC §15). Region polygons are still coarse boxes.
+- CCMD polygons are approximate (43 checkpoints pass). Region polygons are still coarse boxes.
+- Worker host (VPS vs Pi), X account name (SPEC §15).

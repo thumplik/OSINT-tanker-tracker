@@ -181,6 +181,28 @@ def _latest_points_day() -> date:
     return date.fromisoformat(days[-1])
 
 
+def cmd_build_theater(args: argparse.Namespace) -> int:
+    """Theater aggregates and write-once snapshots for stored days, in date order (M5c). Writes
+    no alerts; the official run builds these itself from then on."""
+    from tw.pipeline import Context, prepare_theater
+    from tw.theater.aggregates import AGG_AIRFIELDS, AGG_INVENTORY
+
+    ctx = Context(_data_dir(), rebuild_baselines=args.rebuild_baselines)
+    built = missing = 0
+    for day in _range_days(args):
+        older = partition_dir(ctx.data_dir, AGG_INVENTORY, day).exists() and not (
+            partition_dir(ctx.data_dir, AGG_AIRFIELDS, day).exists()
+        )
+        if older:  # built before airfield presence existed (M5d): rebuild; deterministic
+            ctx.build_theater(day)
+        if prepare_theater(day, ctx) is None:
+            missing += 1
+        else:
+            built += 1
+    print(f"theater: {built} days built, {missing} without data")
+    return 0
+
+
 def cmd_replay(args: argparse.Namespace) -> int:
     """Retrospective: runs aggregates, baselines and detectors over stored days and prints the
     alerts. Nothing is stored as an alert and nothing is posted (SPEC §11)."""
@@ -357,6 +379,14 @@ def build_parser() -> argparse.ArgumentParser:
     airfields = p.add_subparsers(dest="action", required=True)
     p = airfields.add_parser("update", help="download OurAirports into config/airfields.csv")
     p.set_defaults(func=cmd_airfields_update)
+
+    p = sub.add_parser("build-theater", help="CCMD flows and inventory for stored days (M5c)")
+    when = p.add_mutually_exclusive_group(required=True)
+    when.add_argument("--date", type=date.fromisoformat, help="one UTC day")
+    when.add_argument("--from", dest="from_", type=date.fromisoformat, help="first UTC day")
+    p.add_argument("--to", type=date.fromisoformat, help="last UTC day (with --from)")
+    p.add_argument("--rebuild-baselines", action="store_true", help=REBUILD_HELP)
+    p.set_defaults(func=cmd_build_theater)
 
     p = sub.add_parser("replay", help="run the pipeline over stored days (retrospective)")
     when = p.add_mutually_exclusive_group(required=True)

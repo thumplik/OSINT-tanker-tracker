@@ -60,10 +60,40 @@ d5_route_shift:
   window_hours: 72
   min_share_change_points: 20
 
+# Theater layer (SPEC §5-8, M5c): where aircraft are by combatant command (config/ccmds.yaml).
+# A fix is a sortie's start or end position; sorties shorter than counting.min_sortie_minutes give
+# none. Days are judged on fixes from the last `lookback_days` only (point-in-time, no state).
+theater:
+  lookback_days: 14             # fixes older than this are forgotten
+  max_age_days: 14              # inventory: aircraft whose latest fix is this recent
+  dwell_hours: 48               # a transit from home ends where the aircraft stays this long
+  flow_window_days: 7           # entries / exits / transits are summed over this many days
+  baseline_blocks: 8            # flow baseline: this many earlier non-overlapping windows
+  min_blocks: 4                 # fewer complete blocks: "insufficient baseline", never an alert
+
+# Dashboard only (SPEC §10): how far back the trend charts reach. Not used by any detector.
+dashboard:
+  history_days: 180
+
+d6_flow_change:                 # 7-day entries, exits or transits from home per CCMD x family
+  min_z: 3.0
+  min_count: 5
+  min_coverage_normalized_ratio: 1.5
+  normalization_median_floor: 1.0
+
+d7_inventory_shift:             # aircraft last seen in a CCMD vs the same CCMD's recent normal
+  min_z: 3.0
+  min_change: 4                 # aircraft, either direction
+  min_rel_change: 0.5           # |observed - median| / max(median, normalization_median_floor)
+  normalization_median_floor: 2.0
+
 guards:
   coverage_min_ratio: 0.6       # suppress if regional traffic < 60% of its baseline
   coverage_max_ratio: 1.67      # ... or > 167% (1 / 0.6): receivers came online (owner, Oct 2026)
   cooldown_hours: 12
+  cooldown_hours_by_detector:   # multi-day windows would otherwise repeat every day
+    D6: 72
+    D7: 72
 
 composite:
   merge_window_hours: 24

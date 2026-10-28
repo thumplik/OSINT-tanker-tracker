@@ -1,0 +1,143 @@
+# Geographic combatant commands (SPEC §6). Edit here, never in code.
+#
+# Boundaries follow the Unified Command Plan as publicly described: Greenland moved from EUCOM to
+# NORTHCOM on 2025-06-17; Israel is in CENTCOM (2021); Egypt is in CENTCOM; Hawaii is in INDOPACOM;
+# Alaska is in NORTHCOM. No official boundary file exists, so these polygons are APPROXIMATE
+# (good to tens of km on land borders, coarser at sea). `checkpoints` below pins the airfields
+# that matter; tests/unit/test_theater.py asserts every one.
+#
+# `areas` are checked in order and the first polygon holding a point wins, so an earlier area may
+# be drawn loosely over a later one. The last CCMD (`fallback`) takes anything unmatched.
+# Polygons are [lon, lat] vertex lists (closed implicitly) and never cross the antimeridian.
+#
+# status: watch | alerting, as for regions (SPEC §6). Every CCMD starts as watch; promotion is a
+# manual edit after reviewing its backtest. Never promote one in code.
+home: northcom          # "transits from the US" start here (CONUS, Alaska, Canada, Greenland)
+fallback: indopacom
+
+ccmds:
+  - id: northcom
+    name: NORTHCOM
+    status: watch
+    anchor: [-98.0, 39.0]           # [lon, lat]: where map arcs start/end
+  - id: eucom
+    name: EUCOM
+    status: watch
+    anchor: [10.0, 50.0]
+  - id: centcom
+    name: CENTCOM
+    status: watch
+    anchor: [47.0, 28.0]
+  - id: africom
+    name: AFRICOM
+    status: watch
+    anchor: [18.0, 5.0]
+  - id: southcom
+    name: SOUTHCOM
+    status: watch
+    anchor: [-62.0, -12.0]
+  - id: indopacom
+    name: INDOPACOM
+    status: watch
+    anchor: [135.0, 20.0]
+
+areas:
+  - name: Western Aleutians
+    ccmd: northcom
+    polygon: [[170, 50], [180, 50], [180, 56], [170, 56]]
+  - name: Greenland
+    ccmd: northcom
+    polygon: [[-80, 59], [-43, 58.5], [-29, 66], [-17, 72], [-10, 80], [-10, 85], [-80, 85]]
+  - name: Puerto Rico and USVI
+    ccmd: northcom
+    polygon: [[-68.2, 17.4], [-64.2, 17.4], [-64.2, 18.9], [-68.2, 18.9]]
+  - name: Bahamas
+    ccmd: northcom
+    polygon: [[-80.5, 27.5], [-76.5, 27.5], [-71.5, 21.5], [-73.2, 20.6], [-75.7, 21.6],
+              [-78.5, 22.9], [-80.5, 23.6]]
+  - name: Middle East and Central Asia
+    ccmd: centcom
+    polygon: [
+      [25.0, 31.6], [25.0, 33.5], [34.0, 33.5], [35.6, 35.0], [35.9, 35.9],  # Med: Egypt to Syria
+      [36.6, 36.8], [42.4, 37.1], [44.8, 37.2], [44.3, 39.4],              # Turkey border
+      [46.5, 38.85], [48.9, 38.4], [51.5, 40.5],                           # Caucasus (EUCOM) out
+      [50.0, 44.5], [49.0, 46.4], [46.6, 48.8], [50.5, 51.6],              # Caspian, Kazakhstan W
+      [61.0, 50.8], [69.0, 55.4], [76.5, 54.0], [87.3, 49.2],              # Kazakhstan / Russia
+      [82.5, 45.3], [80.2, 42.1], [75.0, 39.5], [74.9, 37.2], [77.8, 35.5],  # China border
+      [74.6, 32.5], [74.5, 31.0], [73.4, 29.9], [71.0, 27.9], [70.2, 25.7],  # India / Pakistan
+      [68.2, 23.7], [68.0, 23.0], [68.0, 10.0], [55.0, 10.0],              # Arabian Sea
+      [51.5, 12.0], [43.6, 12.3], [42.8, 13.5],                            # Gulf of Aden
+      [40.5, 16.5], [38.5, 19.5], [37.6, 22.0], [25.0, 22.0],              # Red Sea, Sudan border
+    ]
+  - name: Europe and Russia
+    ccmd: eucom
+    polygon: [
+      [-40, 33], [-40, 85], [180, 85], [180, 62], [163, 54], [156, 50.5],
+      [147, 45.0], [142, 45.75], [139, 44.5], [130.5, 42.5], [131, 44],    # Russian Far East
+      [134.5, 48.4], [127.5, 49.6], [120, 53.3], [116, 49.8], [98, 51.9],  # China / Mongolia
+      [87.3, 49.2], [80.2, 45.0], [55, 35], [36, 33],                      # behind CENTCOM
+      [25, 33.5], [20, 34.0], [13, 34.5], [11.6, 36.4], [9.5, 38.0],       # Med median line
+      [3, 37.6], [-2, 36.0], [-6.0, 35.9], [-10, 33],
+    ]
+  - name: Africa
+    ccmd: africom
+    polygon: [[-30, 37], [40, 37], [60, 10], [60, -45], [-30, -45]]
+  - name: Central and South America, Caribbean
+    ccmd: southcom
+    polygon: [
+      [-92.2, 14.5], [-91.0, 17.8], [-89.1, 17.8], [-88.3, 18.5], [-86.0, 21.6],
+      [-84.0, 23.8], [-80.5, 23.6], [-70, 23], [-60, 20], [-30, 15], [-30, -60],
+      [-95, -60], [-95, 10],
+    ]
+  - name: North America
+    ccmd: northcom
+    polygon: [
+      [-180, 49], [-180, 65], [-169, 65.5], [-169, 85], [-40, 85], [-40, 15],
+      [-92.2, 14.5], [-100, 12], [-125, 20], [-135, 35], [-140, 50],
+    ]
+
+# Known airfields and their CCMD; every one is asserted by a test. [lat, lon].
+checkpoints:
+  ETAR: {at: [49.437, 7.600], ccmd: eucom}       # Ramstein
+  EGUN: {at: [52.362, 0.486], ccmd: eucom}       # Mildenhall
+  LTAG: {at: [37.002, 35.426], ccmd: eucom}      # Incirlik
+  LCRA: {at: [34.590, 32.988], ccmd: eucom}      # Akrotiri
+  LPLA: {at: [38.762, -27.091], ccmd: eucom}     # Lajes
+  LERT: {at: [36.645, -6.349], ccmd: eucom}      # Rota
+  LICZ: {at: [37.402, 14.922], ccmd: eucom}      # Sigonella
+  LGSA: {at: [35.532, 24.150], ccmd: eucom}      # Souda Bay
+  BIKF: {at: [63.985, -22.605], ccmd: eucom}     # Keflavik
+  UGTB: {at: [41.669, 44.955], ccmd: eucom}      # Tbilisi
+  UUEE: {at: [55.973, 37.415], ccmd: eucom}      # Moscow
+  OTBH: {at: [25.117, 51.315], ccmd: centcom}    # Al Udeid
+  OEPS: {at: [24.063, 47.580], ccmd: centcom}    # Prince Sultan
+  OMAM: {at: [24.248, 54.548], ccmd: centcom}    # Al Dhafra
+  OKAS: {at: [29.347, 47.521], ccmd: centcom}    # Ali Al Salem
+  LLNV: {at: [31.208, 35.012], ccmd: centcom}    # Nevatim
+  OJMS: {at: [32.356, 36.259], ccmd: centcom}    # Muwaffaq Salti
+  HECA: {at: [30.122, 31.406], ccmd: centcom}    # Cairo
+  OPRN: {at: [33.617, 73.099], ccmd: centcom}    # Islamabad (Nur Khan)
+  UAAA: {at: [43.352, 77.040], ccmd: centcom}    # Almaty
+  HDAM: {at: [11.547, 43.159], ccmd: africom}    # Camp Lemonnier, Djibouti
+  DNMM: {at: [6.577, 3.321], ccmd: africom}      # Lagos
+  FJDG: {at: [-7.313, 72.411], ccmd: indopacom}  # Diego Garcia
+  RODN: {at: [26.356, 127.768], ccmd: indopacom} # Kadena
+  RJTY: {at: [35.748, 139.348], ccmd: indopacom} # Yokota
+  RKSO: {at: [37.090, 127.030], ccmd: indopacom} # Osan
+  PGUA: {at: [13.584, 144.930], ccmd: indopacom} # Andersen
+  PHIK: {at: [21.319, -157.922], ccmd: indopacom} # Hickam
+  YPDN: {at: [-12.415, 130.877], ccmd: indopacom} # Darwin
+  VIDP: {at: [28.567, 77.103], ccmd: indopacom}  # Delhi
+  BGTL: {at: [76.531, -68.703], ccmd: northcom}  # Pituffik (Thule)
+  PAED: {at: [61.251, -149.806], ccmd: northcom} # Elmendorf
+  PASY: {at: [52.712, 174.114], ccmd: northcom}  # Eareckson (Shemya)
+  KDOV: {at: [39.130, -75.466], ccmd: northcom}  # Dover
+  KTCM: {at: [47.138, -122.476], ccmd: northcom} # McChord
+  KNQX: {at: [24.576, -81.689], ccmd: northcom}  # Key West
+  TJSJ: {at: [18.439, -66.002], ccmd: northcom}  # San Juan
+  TXKF: {at: [32.364, -64.679], ccmd: northcom}  # Bermuda
+  MMMX: {at: [19.436, -99.072], ccmd: northcom}  # Mexico City
+  MUGM: {at: [19.906, -75.207], ccmd: southcom}  # Guantanamo
+  MHSC: {at: [14.382, -87.621], ccmd: southcom}  # Soto Cano
+  SKBO: {at: [4.702, -74.147], ccmd: southcom}   # Bogota
+  TNCC: {at: [12.189, -68.960], ccmd: southcom}  # Curacao

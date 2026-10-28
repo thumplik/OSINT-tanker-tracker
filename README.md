@@ -129,6 +129,7 @@ Data goes to `./data` by default. Set `TW_DATA_DIR` to change it (see [`.env.exa
 | `tw backtest --months 6` | ✅ | Writes `reports/backtest_<date>.md`: alert rate, top alerts, guard suppressions, z sweep |
 | `tw worker [--once]` | M4 | Poll `/v2/mil` every 15 s (adsb.lol, adsb.fi fallback), hourly provisional rolling windows, nightly official alerts from the release |
 | `tw worker-report --from D --to D` | M4 | Writes `reports/worker_<date>.md`: uptime, poll gaps, requests per provider vs rate limits, failures, provisional vs official |
+| `tw build-theater --from D --to D` | M5c | CCMD inventory, moves, transits and snapshots for stored days (the official run builds them from then on) |
 | `tw export [--from D --to D] [--dest local:<dir>\|blob]` | M5 | Dashboard day files (JSON) to `web/public/data` or Vercel Blob (`BLOB_READ_WRITE_TOKEN` in `.env`); no dates exports every day with data |
 
 ## Project layout
@@ -145,6 +146,7 @@ src/tw/
   publisher/     templates, validator, charts, approval-gated X client (M7)
   views/         point-in-time day views for the dashboard         (M5)
   export/        day views to local files or Vercel Blob           (M5)
+  theater/       CCMD mapping, fixes, inventory, moves, transits   (M5c)
 config/          fleet, regions, detectors, providers, events, language, publisher
 tests/           unit tests and synthetic fixtures (tests never call live APIs)
 eval/            hand-labeled truth set for choosing thresholds
@@ -162,6 +164,8 @@ web/             dashboard (React + MapLibre + deck.gl, on Vercel)
 | 🟡 | **M4** Live ingest worker | Runs 72h unattended within rate limits (trial running) |
 | 🟡 | **M5** Dashboard with heat map, alert feed and date picker | Any day loads in < 1 s (built; deploy pending) |
 | ⬜ | **M5b** Playback, compare mode, retrospective re-runs | Point-in-time test passes |
+| 🟡 | **M5c** Families kept apart; CCMD flows, inventory, D6/D7, Theaters tab | Built; PR open |
+| 🟡 | **M5d** Overview front page: what stands out, latest positions, 180-day trends | Built; on the M5c PR |
 | ⬜ | **M6** D3–D5 and composite scoring | Backtest precision reviewed |
 | ⬜ | **M7** Publisher with approval queue | First approved post |
 | ⬜ | **M8** Truth set and threshold sweep | 20+ labeled periods |

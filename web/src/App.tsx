@@ -2,12 +2,31 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { loadDay, loadIndex, loadMeta, loadR6, NotFound } from "./data";
 import { cellsFor } from "./heat";
 import { MapView } from "./MapView";
-import { AlertsPanel, RegionsPanel, SortiesPanel } from "./panels";
-import { parseState, serializeState, stepDate, type Tab, type ViewState } from "./state";
+import { groupPositions } from "./overview";
+import { AirfieldsPanel } from "./AirfieldsPanel";
+import { OverviewPanel } from "./OverviewPanel";
+import { AlertsPanel, forFamily, RegionsPanel, SortiesPanel, TheatersPanel } from "./panels";
+import { parseState, serializeState, stepDate, TABS, type ViewState } from "./state";
+import { transitArcs } from "./theater";
 import type { DayR6, DayView, SiteIndex, SiteMeta } from "./types";
 import { familyLabel } from "./wording";
 
-type Load<T> = { status: "loading" } | { status: "ok"; data: T } | { status: "missing" | "error"; message: string };
+const TAB_LABEL: Record<string, string> = {
+  overview: "Overview",
+  airfields: "Airfields",
+  alerts: "Alerts",
+  theaters: "Theaters",
+  sorties: "Flights",
+  regions: "Regions",
+};
+
+// Tankers first: the site's main subject. Families are never mixed in one count.
+const FAMILY_ORDER = ["tanker", "strategic_airlift", "tactical_airlift"];
+
+type Load<T> =
+  | { status: "loading" }
+  | { status: "ok"; data: T }
+  | { status: "missing" | "error"; message: string };
 
 function useUrlState(): [ViewState, (patch: Partial<ViewState>) => void] {
   const [state, setState] = useState(() => parseState(window.location.search));
@@ -74,7 +93,7 @@ export function App() {
   }, [date]);
 
   useEffect(() => {
-    if (!date || state.res !== 6) return;
+    if (!date || state.res !== 6 || state.layer !== "activity") return;
     let live = true;
     setR6({ status: "loading" });
     loadR6(date)
@@ -83,18 +102,51 @@ export function App() {
     return () => {
       live = false;
     };
-  }, [date, state.res]);
+  }, [date, state.res, state.layer]);
 
   const view = day.status === "ok" ? day.data : null;
-  const heat = state.res === 6 ? (r6?.status === "ok" ? r6.data : null) : view?.heat ?? null;
+  const heat = state.res === 6 ? (r6?.status === "ok" ? r6.data : null) : (view?.heat ?? null);
   const cells = useMemo(
     () => (heat ? cellsFor(heat, state.family, state.res === 4 ? state.hour : null) : []),
     [heat, state.family, state.hour, state.res],
   );
   const unit =
     state.res === 6 ? "aircraft (day)" : state.hour === null ? "aircraft-hours" : "aircraft";
-  const families = view?.heat.families ?? ["all"];
+  const families = FAMILY_ORDER.filter((f) => view?.heat.families.includes(f));
   const onRegion = useCallback((id: string | null) => update({ region: id }), [update]);
+  const onCcmd = useCallback((id: string | null) => update({ ccmd: id }), [update]);
+  const theaterTab = state.tab === "theaters" && !!meta?.ccmds;
+  const arcs = useMemo(
+    () =>
+      view?.theaters && meta?.ccmds
+        ? transitArcs(view.theaters.transits, meta.ccmds, view.theaters.home, state.family)
+        : [],
+    [view, meta, state.family],
+  );
+  const grouped = useMemo(
+    () =>
+      groupPositions(
+        (view?.theaters?.positions ?? []).filter((p) => p.family === state.family),
+        view?.theaters?.airfields ?? {},
+      ),
+    [view, state.family],
+  );
+  // An airfield opens its card on the Airfields tab when that tab is open, else on the Overview.
+  const onField = useCallback(
+    (code: string | null) =>
+      update({ field: code, tab: state.tab === "airfields" ? "airfields" : "overview" }),
+    [update, state.tab],
+  );
+  const at = view
+    ? view.meta.tier === "official"
+      ? new Date(Date.parse(`${view.meta.date}T00:00:00Z`) + 86_400_000).toISOString()
+      : view.meta.generated_at
+    : "";
+  const liveAlerts = view
+    ? forFamily(view.alerts, state.family).filter(
+        (a) => a.tier === "official" && a.status !== "suppressed",
+      ).length
+    : 0;
 
   if (fatal) {
     return (
@@ -138,17 +190,17 @@ export function App() {
               ›
             </button>
           </div>
-          <select
-            aria-label="Aircraft family"
-            value={state.family}
-            onChange={(e) => update({ family: e.target.value })}
-          >
+          <div className="seg family" role="group" aria-label="Aircraft family">
             {families.map((f) => (
-              <option key={f} value={f}>
+              <button
+                key={f}
+                aria-pressed={state.family === f}
+                onClick={() => update({ family: f })}
+              >
                 {familyLabel(f)}
-              </option>
+              </button>
             ))}
-          </select>
+          </div>
           {tier && (
             <span
               className={`badge ${tier}`}
@@ -164,60 +216,98 @@ export function App() {
         </div>
       </header>
 
-      <main className="body">
+      <main className={`body ${state.tab === "airfields" ? "wide" : ""}`}>
         <section className="map-col">
           <MapView
+            layer={state.layer}
             cells={cells}
             unit={unit}
+            grouped={grouped}
+            selectedField={state.field}
+            onField={onField}
+            showRegions={state.tab === "regions" || state.tab === "sorties"}
             regions={meta?.regions ?? []}
             selectedRegion={state.region}
             onRegion={onRegion}
+            ccmds={theaterTab ? meta?.ccmds : undefined}
+            arcs={arcs}
+            selectedCcmd={state.ccmd}
+            onCcmd={onCcmd}
           />
           <div className="map-controls">
-            <div className="seg" role="group" aria-label="Resolution">
-              <button aria-pressed={state.res === 4} onClick={() => update({ res: 4 })}>
-                Regional
+            <div className="seg" role="group" aria-label="Map shows">
+              <button
+                aria-pressed={state.layer === "positions"}
+                onClick={() => update({ layer: "positions" })}
+              >
+                Positions
               </button>
-              <button aria-pressed={state.res === 6} onClick={() => update({ res: 6, hour: null })}>
-                Local
+              <button
+                aria-pressed={state.layer === "activity"}
+                onClick={() => update({ layer: "activity" })}
+              >
+                Activity
               </button>
             </div>
-            {state.res === 4 ? (
-              <label className="hour">
-                <span>{state.hour === null ? "All day" : `${String(state.hour).padStart(2, "0")}:00Z`}</span>
-                <input
-                  type="range"
-                  min={-1}
-                  max={23}
-                  value={state.hour ?? -1}
-                  aria-label="Hour (UTC); leftmost is the whole day"
-                  onChange={(e) => {
-                    const h = Number(e.target.value);
-                    update({ hour: h < 0 ? null : h });
-                  }}
-                />
-              </label>
-            ) : (
+            {state.layer === "positions" ? (
               <span className="hint">
-                {r6?.status === "loading" ? "Loading local detail…" : "Whole day, ~3 km cells"}
+                Where each aircraft was last seen, as of{" "}
+                {view?.meta.tier === "official" ? "the end of the day" : `${at.slice(11, 16)}Z`}.
+                Click an airfield for its aircraft.
               </span>
+            ) : (
+              <>
+                <div className="seg" role="group" aria-label="Resolution">
+                  <button aria-pressed={state.res === 4} onClick={() => update({ res: 4 })}>
+                    Regional
+                  </button>
+                  <button
+                    aria-pressed={state.res === 6}
+                    onClick={() => update({ res: 6, hour: null })}
+                  >
+                    Local
+                  </button>
+                </div>
+                {state.res === 4 ? (
+                  <label className="hour">
+                    <span>
+                      {state.hour === null
+                        ? "All day"
+                        : `${String(state.hour).padStart(2, "0")}:00Z`}
+                    </span>
+                    <input
+                      type="range"
+                      min={-1}
+                      max={23}
+                      value={state.hour ?? -1}
+                      aria-label="Hour (UTC); leftmost is the whole day"
+                      onChange={(e) => {
+                        const h = Number(e.target.value);
+                        update({ hour: h < 0 ? null : h });
+                      }}
+                    />
+                  </label>
+                ) : (
+                  <span className="hint">
+                    {r6?.status === "loading" ? "Loading local detail…" : "Whole day, ~3 km cells"}
+                  </span>
+                )}
+              </>
             )}
           </div>
         </section>
 
         <aside className="panel">
           <nav className="tabs" role="tablist">
-            {(["alerts", "regions", "sorties"] as Tab[]).map((t) => (
+            {TABS.map((t) => (
               <button
                 key={t}
                 role="tab"
                 aria-selected={state.tab === t}
                 onClick={() => update({ tab: t })}
               >
-                {t === "alerts" ? "Alerts" : t === "regions" ? "Regions" : "Sorties"}
-                {t === "alerts" && indexDay && indexDay.alerts > 0 && (
-                  <span className="count">{indexDay.alerts}</span>
-                )}
+                {TAB_LABEL[t]}
+                {t === "alerts" && liveAlerts > 0 && <span className="count">{liveAlerts}</span>}
               </button>
             ))}
           </nav>
@@ -226,8 +316,35 @@ export function App() {
             {(day.status === "missing" || day.status === "error") && (
               <p className="muted">{day.message}</p>
             )}
+            {view && state.tab === "overview" && (
+              <OverviewPanel
+                view={view}
+                meta={meta}
+                family={state.family}
+                ccmd={state.ccmd}
+                onCcmd={onCcmd}
+                grouped={grouped}
+                field={state.field}
+                onField={onField}
+                at={at}
+                onRegion={(id: string | null) => update({ region: id, tab: "regions" })}
+              />
+            )}
+            {view && state.tab === "airfields" && (
+              <AirfieldsPanel
+                view={view}
+                meta={meta}
+                family={state.family}
+                ccmd={state.ccmd}
+                onCcmd={onCcmd}
+                grouped={grouped}
+                field={state.field}
+                onField={onField}
+                at={at}
+              />
+            )}
             {view && state.tab === "alerts" && (
-              <AlertsPanel view={view} meta={meta} />
+              <AlertsPanel view={view} meta={meta} family={state.family} />
             )}
             {view && state.tab === "regions" && (
               <RegionsPanel
@@ -238,8 +355,23 @@ export function App() {
                 onRegion={onRegion}
               />
             )}
+            {view && state.tab === "theaters" && (
+              <TheatersPanel
+                view={view}
+                meta={meta}
+                family={state.family}
+                selected={state.ccmd}
+                onCcmd={onCcmd}
+              />
+            )}
             {view && state.tab === "sorties" && (
-              <SortiesPanel view={view} meta={meta} family={state.family} region={state.region} onRegion={onRegion} />
+              <SortiesPanel
+                view={view}
+                meta={meta}
+                family={state.family}
+                region={state.region}
+                onRegion={onRegion}
+              />
             )}
           </div>
         </aside>
@@ -247,8 +379,9 @@ export function App() {
 
       <footer className="foot">
         <span>
-          Data: {meta?.attribution.join(" · ") ?? "adsb.lol (ODbL)"}. Public ADS-B only; not affiliated
-          with any government. Counts are what public receivers saw, not complete activity. Times UTC.
+          Data: {meta?.attribution.join(" · ") ?? "adsb.lol (ODbL)"}. Public ADS-B only; not
+          affiliated with any government. Counts are what public receivers saw, not complete
+          activity. Times UTC.
         </span>
         {view && (
           <span className="muted">

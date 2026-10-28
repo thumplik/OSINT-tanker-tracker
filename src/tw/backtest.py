@@ -24,20 +24,27 @@ from tw.config import DEFAULT_CONFIG_DIR, config_hash, load_regions
 from tw.detectors.types import Alert
 from tw.pipeline import Context, DayInputs, detect_day, run_days
 from tw.provenance import code_version, effective_config_hash
+from tw.theater.ccmd import load_ccmds
 
 REPO = DEFAULT_CONFIG_DIR.parent
 SWEEP_Z = (2.5, 3.0, 3.5, 4.0)
+SWEPT = {"D1": "d1_volume_surge", "D6": "d6_flow_change", "D7": "d7_inventory_shift"}
 
 
 def _family_or_field(a: Alert) -> str:
     if a.detector == "D2":
         return f"{a.evidence['airfield']} {a.evidence['family']}"
+    if a.detector in ("D6", "D7"):
+        direction = f" {a.evidence['direction']}" if a.detector == "D7" else ""
+        return f"{a.evidence['family']} {a.evidence['series']}{direction}"
     return str(a.evidence["family"])
 
 
 def _sweep(prepared: Sequence[DayInputs], ctx: Context, z: float) -> list[Alert]:
+    """Every z-thresholded detector at `z` (each row of the sweep tables reads its own one)."""
     cfg = copy.deepcopy(ctx.cfg)
-    cfg["d1_volume_surge"]["min_z"] = z
+    for section in SWEPT.values():
+        cfg[section]["min_z"] = z
     provenance = (effective_config_hash(cfg), code_version())
     alerts: list[Alert] = []
     for inputs in prepared:
@@ -103,6 +110,7 @@ def report(
     live = [a for a in alerts if a.status != "suppressed"]
     suppressed = [a for a in alerts if a.status == "suppressed"]
     statuses = {r.id: r.status for r in load_regions().regions}
+    ccmd_status = {c.id: c.status for c in load_ccmds().ccmds}
     out = [
         f"# Backtest {days[0]} to {days[-1]}",
         "",
@@ -136,32 +144,38 @@ def report(
         "",
         "## By region",
         "",
-        "| region | status | D1 | D2 | suppressed |",
-        "|---|---|---:|---:|---:|",
+        "| region | status | D1 | D2 | D6 | D7 | suppressed |",
+        "|---|---|---:|---:|---:|---:|---:|",
     ]
     per_region: dict[str, Counter[str]] = defaultdict(Counter)
     for a in alerts:
         per_region[a.region]["suppressed" if a.status == "suppressed" else a.detector] += 1
     for region in sorted(per_region):
-        c, status = per_region[region], statuses.get(region, "?")
-        out.append(f"| {region} | {status} | {c['D1']} | {c['D2']} | {c['suppressed']} |")
+        c, status = per_region[region], statuses.get(region, ccmd_status.get(region, "?"))
+        out.append(
+            f"| {region} | {status} | {c['D1']} | {c['D2']} | {c['D6']} | {c['D7']} | "
+            f"{c['suppressed']} |"
+        )
 
     out += [
         "",
         "## Weekly",
         "",
-        "| week of | D1 low | D1 medium | D2 | suppressed |",
-        "|---|---:|---:|---:|---:|",
+        "| week of | D1 low | D1 medium | D2 | D6 | D7 | suppressed |",
+        "|---|---:|---:|---:|---:|---:|---:|",
     ]
     weekly: dict[date, Counter[str]] = defaultdict(Counter)
     for a in alerts:
         d = a.window_end.date() - timedelta(days=1)
-        key = "suppressed" if a.status == "suppressed" else f"{a.detector} {a.severity}"
+        key = "suppressed" if a.status == "suppressed" else a.detector
+        if a.detector == "D1" and key != "suppressed":
+            key = f"D1 {a.severity}"
         weekly[d - timedelta(days=d.weekday())][key] += 1
     for week in sorted(weekly):
         c = weekly[week]
         out.append(
-            f"| {week} | {c['D1 low']} | {c['D1 medium']} | {c['D2 low']} | {c['suppressed']} |"
+            f"| {week} | {c['D1 low']} | {c['D1 medium']} | {c['D2']} | {c['D6']} | {c['D7']} | "
+            f"{c['suppressed']} |"
         )
 
     out += [
@@ -180,23 +194,24 @@ def report(
             f"{'' if cov is None else f'{cov:.2f}'} | {a.status} |"
         )
 
-    out += [
-        "",
-        "## D1 threshold sweep",
-        "",
-        "Chosen deliberately from this table, never tuned automatically (SPEC §12).",
-        "",
-        "| min_z | D1 alerts | per week | medium | suppressed | truth set |",
-        "|---:|---:|---:|---:|---:|---|",
-    ]
-    for z, z_alerts in sweep.items():
-        d1 = [a for a in z_alerts if a.detector == "D1"]
-        d1_live = [a for a in d1 if a.status != "suppressed"]
-        out.append(
-            f"| {z:g} | {len(d1_live)} | {len(d1_live) / weeks:.1f} | "
-            f"{sum(a.severity == 'medium' for a in d1_live)} | {len(d1) - len(d1_live)} | "
-            f"{truth_metrics(z_alerts, periods)} |"
-        )
+    for det in SWEPT:
+        out += [
+            "",
+            f"## {det} threshold sweep",
+            "",
+            "Chosen deliberately from this table, never tuned automatically (SPEC §12).",
+            "",
+            f"| min_z | {det} alerts | per week | medium | suppressed | truth set |",
+            "|---:|---:|---:|---:|---:|---|",
+        ]
+        for z, z_alerts in sweep.items():
+            mine = [a for a in z_alerts if a.detector == det]
+            mine_live = [a for a in mine if a.status != "suppressed"]
+            out.append(
+                f"| {z:g} | {len(mine_live)} | {len(mine_live) / weeks:.1f} | "
+                f"{sum(a.severity == 'medium' for a in mine_live)} | "
+                f"{len(mine) - len(mine_live)} | {truth_metrics(mine, periods)} |"
+            )
     out += [
         "",
         "## Truth set",

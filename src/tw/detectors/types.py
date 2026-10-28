@@ -30,6 +30,23 @@ class Arrival(NamedTuple):
     day: date  # UTC day of the landing
 
 
+class FlowCount(NamedTuple):
+    """Entries, exits or transits from home of one family for one CCMD, summed over a window."""
+
+    ccmd: str
+    family: str
+    series: str  # entries | exits | transits
+    observed: int
+
+
+class InventoryCount(NamedTuple):
+    """Aircraft of one family whose latest fix is in a CCMD at the end of a day."""
+
+    ccmd: str
+    family: str
+    aircraft: int
+
+
 class KeyBaseline(NamedTuple):
     median: float
     mad: float
