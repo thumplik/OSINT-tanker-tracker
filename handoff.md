@@ -31,13 +31,9 @@ _Last updated: 2026-10-27_
   The golden file is `tests/golden/pipeline_surge.json`.
 - Codex adversarial review (PR #1): 14 findings. 12 fixed with regression tests
   (`tests/detectors/test_review_findings.py`, `tests/unit/test_pipeline.py`). #9 (retrospective
-  parquet export) is by design and now labeled as such; #10 is hardened. Changes:
-  - write-once snapshots;
-  - complete-day inputs only;
-  - one config through the pipeline;
-  - per-day coverage guard;
-  - cooldown within a run;
-  - provenance on alerts and baselines.
+  parquet export) is by design and now labeled; #10 is hardened. Main changes: write-once
+  snapshots, complete days only, one config end to end, per-day coverage guard, cooldown within
+  a run, provenance on alerts and baselines.
 - Backtest (2026-04-28..10-26, `reports/backtest_2026-10-26.md`):
   - D1 6.2/week (3.3 medium).
   - D2 13.3/week.
@@ -49,8 +45,8 @@ _Last updated: 2026-10-27_
 - Owner: start the truth set (`eval/truth_set.yaml`, 20–40 periods). The Gulf June days and the
   Eastern Med C-17 day (2026-08-18, 16 vs 3.5) are candidates. Precision and recall show up in the
   backtest once periods exist.
-- D2 is noisy (~25/week, mostly CONUS civil/ANG fields). Revisit with a sweep on
-  `min_arrivals` / `max_baseline_arrivals` once labels exist.
+- D2 is still the noisiest (13/week, mostly CONUS civil/ANG fields). Sweep `min_arrivals` and
+  `max_baseline_arrivals` once labels exist.
 - M4: live worker (rolling 24 h windows over the same `pipeline` functions, rate-limited providers).
   Start in plan mode.
 
