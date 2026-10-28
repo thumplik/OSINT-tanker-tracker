@@ -33,10 +33,17 @@ _Last updated: 2026-10-28_
   `cd web && npm run dev` (TW_DATA_DIR points at the main checkout's data from the worktree).
 - MapLibre 6 needs `setWorkerUrl(...?worker&url)` under Vite (done in MapView.tsx).
 
+## Vercel (set up 2026-10-28 with the CLI, logged in as thumplik-2699)
+- Site: https://tanker-watch-dun.vercel.app (project `tanker-watch`, root `web/`, team
+  thumplik-2699s-projects). Production branch is `m5-dashboard` for now; set it back to `main`
+  after PRs #2/#3 merge (`vercel api /v9/projects/tanker-watch/branch --method PATCH`).
+- Blob store `tanker-watch-data` (public, iad1): https://pd1haiwyvvtzrh5i.public.blob.vercel-storage.com
+  = `VITE_DATA_BASE_URL` (production + preview). RW token in the main checkout's `.env` (600).
+- Backfill 2026-10-28: 362 days, 517 MB (r6 files ~1.4 MB/day dominate), 378 s. Day file
+  ~25-60 KB brotli: ~80 ms cached, ~0.24 s uncached. Today's file is frozen until the worker
+  restarts with the export job (after the trial) or `tw export --dest blob` is run by hand.
+
 ## Next
-- Owner OK, then: create the public Blob store and the Vercel project (root `web/`,
-  `VITE_DATA_BASE_URL` = Blob URL); owner pastes `BLOB_READ_WRITE_TOKEN` into `.env`;
-  `tw export --dest blob` backfills all days (~1,100 PUTs at 2/s, ~10 min); phone check.
 - After the trial: `uv run tw worker-report --from 2026-10-28 --to 2026-10-31`. Done if:
   - no crashes;
   - longest poll gap < 5 min outside outages;
