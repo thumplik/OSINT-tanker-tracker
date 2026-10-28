@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import os
 import sys
 import time
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tw.config import load_fleet
 from tw.store.parquet import partition_dir
@@ -218,6 +219,52 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build_worker() -> Any:
+    from tw.ingest.history_download import HistoryConfig, http_opener
+    from tw.ingest.live import LiveClient, LiveConfig, http_fetch
+    from tw.ingest.ratelimit import RateLimiter
+    from tw.worker import Worker
+
+    live = LiveConfig.load()
+    limiter = RateLimiter.from_config()
+    history = HistoryConfig.load()
+    client = LiveClient(live, http_fetch(live), limiter)
+    return Worker(_data_dir(), client, limiter, history, http_opener(history))
+
+
+def cmd_worker(args: argparse.Namespace) -> int:
+    """Live polling, hourly provisional windows and the nightly official run (SPEC §4). With
+    --once: one poll, flush and provisional run, for a smoke test."""
+    import logging
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)sZ %(levelname)s %(name)s %(message)s"
+    )
+    logging.Formatter.converter = time.gmtime  # UTC everywhere, logs included
+    logging.getLogger("apscheduler").setLevel(logging.WARNING)  # not one line per poll
+    worker = _build_worker()
+    if not args.once:
+        worker.run()
+        return 0
+    now = datetime.now(UTC)
+    worker.poll(now)
+    worker.flush(now)
+    written = worker.provisional(now)
+    worker.heartbeat(now)
+    print(json.dumps(worker.status, indent=1, default=str))
+    print(f"provisional alerts written: {written}")
+    return 0 if worker.status.get("polls_ok") else 1
+
+
+def cmd_worker_report(args: argparse.Namespace) -> int:
+    from tw.backtest import REPO
+    from tw.worker_report import write_report
+
+    path, respected = write_report(_data_dir(), args.from_, args.to, REPO / "reports")
+    print(f"wrote {path} (rate limits respected: {'yes' if respected else 'NO'})")
+    return 0 if respected else 1
+
+
 def _not_yet(milestone: str) -> int:
     print(f"not implemented yet (milestone {milestone}, see SPEC §14)", file=sys.stderr)
     return 2
@@ -288,8 +335,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--rebuild-baselines", action="store_true", help=REBUILD_HELP)
     p.set_defaults(func=cmd_backtest, date=None)
 
+    p = sub.add_parser("worker", help="live ingest + detection (runs until stopped)")
+    p.add_argument(
+        "--once", action="store_true", help="one poll/flush/provisional cycle, then exit"
+    )
+    p.set_defaults(func=cmd_worker)
+
+    p = sub.add_parser("worker-report", help="write reports/worker_<date>.md from worker logs")
+    p.add_argument("--from", dest="from_", type=date.fromisoformat, required=True)
+    p.add_argument("--to", type=date.fromisoformat, required=True)
+    p.set_defaults(func=cmd_worker_report)
+
     for name, milestone in [
-        ("worker", "M4"),
         ("api", "M5"),
     ]:
         p = sub.add_parser(name, help=f"(milestone {milestone})")

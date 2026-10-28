@@ -30,6 +30,8 @@ sortie:
 counting:
   min_sortie_minutes: 30
 
+# window_hours apply to both tiers: official runs use whole UTC days, the provisional (live) tier
+# uses rolling windows of the same length ending at each hour (SPEC §8).
 d1_volume_surge:
   window_hours: 24
   min_z: 3.0

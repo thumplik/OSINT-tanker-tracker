@@ -56,6 +56,33 @@ class Alert:
     code_version: str = ""
 
 
+class Window(NamedTuple):
+    """[start, end) in UTC. Official runs use whole days; the provisional tier uses rolling
+    windows ending on the hour (SPEC §8)."""
+
+    start: datetime
+    end: datetime
+
+    @property
+    def days(self) -> tuple[date, ...]:
+        """UTC days the window overlaps."""
+        first, last = self.start.date(), (self.end - timedelta(microseconds=1)).date()
+        return tuple(first + timedelta(days=n) for n in range((last - first).days + 1))
+
+    @property
+    def weekday(self) -> int:
+        """Weekday whose baseline the window is compared with: that of its midpoint."""
+        return (self.start + (self.end - self.start) / 2).weekday()
+
+
+def as_window(when: date | Window, hours: float) -> Window:
+    """A window as given, or the `hours`-long window ending at the midnight after a day."""
+    if isinstance(when, Window):
+        return when
+    end = datetime.combine(when + timedelta(days=1), time(), tzinfo=UTC)
+    return Window(end - timedelta(hours=hours), end)
+
+
 def day_window(day: date, days: int = 1) -> tuple[datetime, datetime]:
     """[start, end) covering `days` UTC days ending with `day`."""
     end = datetime.combine(day + timedelta(days=1), time(), tzinfo=UTC)

@@ -16,7 +16,8 @@ zeros. Within a complete day, a region with no sorties is a real zero.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date
+from collections.abc import Iterable, Mapping
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -86,29 +87,18 @@ class RegionMapper:
         return self.region(h3.latlng_to_cell(lat, lon, self._resolution))
 
 
-def build_aggregates(
-    day: date,
-    data_dir: Path,
-    fleet: Fleet | None = None,
-    mapper: RegionMapper | None = None,
-    min_sortie_minutes: float | None = None,
-) -> bool:
-    """Write the three aggregate partitions for `day`. Returns False (writing nothing) unless
-    the day's points, sorties and coverage partitions all exist: an incomplete day is missing,
-    never a day of zeros."""
-    if not all(
-        partition_dir(data_dir, ds, day).exists() for ds in ("points", "sorties", "coverage")
-    ):
-        return False
-    fleet = fleet or load_fleet()
-    mapper = mapper or RegionMapper(load_regions())
-    if min_sortie_minutes is None:
-        min_sortie_minutes = float(load_yaml("detectors.yaml")["counting"]["min_sortie_minutes"])
-
+def count_sorties(
+    sorties: Iterable[Mapping[str, Any]],
+    fleet: Fleet,
+    mapper: RegionMapper,
+    min_sortie_minutes: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(region_family rows, arrival rows) for a set of sorties. Pure; shared by the daily
+    aggregates and the provisional rolling windows, so both count the same way."""
     ids: dict[tuple[str, str], list[str]] = defaultdict(list)
     hexes: dict[tuple[str, str], set[str]] = defaultdict(set)
     arrivals: list[dict[str, Any]] = []
-    for s in read_day(data_dir, "sorties", day).to_pylist():
+    for s in sorties:
         if (s["end_ts"] - s["start_ts"]).total_seconds() < min_sortie_minutes * 60:
             continue
         regions = sorted({mapper.region(c) for c in s["h3_cells"]})
@@ -138,6 +128,57 @@ def build_aggregates(
         for region in mapper.ids
         for family in sorted(fleet.families)
     ]
+    arrivals.sort(key=lambda r: (r["airfield"], r["family"], r["sortie_id"]))
+    return region_family, arrivals
+
+
+def window_counts(
+    sorties: Iterable[Mapping[str, Any]],
+    start: datetime,
+    end: datetime,
+    fleet: Fleet,
+    mapper: RegionMapper,
+    min_sortie_minutes: float,
+) -> list[dict[str, Any]]:
+    """region_family rows for sorties overlapping [start, end) (the provisional D1 window)."""
+    inside = [s for s in sorties if s["start_ts"] < end and s["end_ts"] >= start]
+    return count_sorties(inside, fleet, mapper, min_sortie_minutes)[0]
+
+
+def window_arrivals(
+    sorties: Iterable[Mapping[str, Any]],
+    start: datetime,
+    end: datetime,
+    fleet: Fleet,
+    mapper: RegionMapper,
+    min_sortie_minutes: float,
+) -> list[dict[str, Any]]:
+    """Arrival rows for closed sorties landing in [start, end) (the provisional D2 window)."""
+    landed = [s for s in sorties if not s["is_open"] and start <= s["end_ts"] < end]
+    return count_sorties(landed, fleet, mapper, min_sortie_minutes)[1]
+
+
+def build_aggregates(
+    day: date,
+    data_dir: Path,
+    fleet: Fleet | None = None,
+    mapper: RegionMapper | None = None,
+    min_sortie_minutes: float | None = None,
+) -> bool:
+    """Write the three aggregate partitions for `day`. Returns False (writing nothing) unless
+    the day's points, sorties and coverage partitions all exist: an incomplete day is missing,
+    never a day of zeros."""
+    if not all(
+        partition_dir(data_dir, ds, day).exists() for ds in ("points", "sorties", "coverage")
+    ):
+        return False
+    fleet = fleet or load_fleet()
+    mapper = mapper or RegionMapper(load_regions())
+    if min_sortie_minutes is None:
+        min_sortie_minutes = float(load_yaml("detectors.yaml")["counting"]["min_sortie_minutes"])
+
+    sorties = read_day(data_dir, "sorties", day).to_pylist()
+    region_family, arrivals = count_sorties(sorties, fleet, mapper, min_sortie_minutes)
 
     coverage: dict[str, int] = dict.fromkeys(mapper.ids, 0)
     cov = read_day(data_dir, "coverage", day)
@@ -146,7 +187,6 @@ def build_aggregates(
     ):
         coverage[mapper.region(cell_id)] += int(aircraft)
 
-    arrivals.sort(key=lambda r: (r["airfield"], r["family"], r["sortie_id"]))
     write_partition(data_dir, AGG_REGION_FAMILY, day, region_family, REGION_FAMILY_SCHEMA, PART)
     write_partition(
         data_dir,

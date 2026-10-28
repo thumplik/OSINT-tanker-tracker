@@ -137,3 +137,31 @@ def test_region_mapper_falls_back_to_other():
     mapper = RegionMapper(load_regions())
     assert mapper.region(cell(EUROPE)) == "europe"
     assert mapper.region(cell((-60.0, 0.0))) == "other"  # Southern Ocean
+
+
+def test_a_full_day_window_counts_like_the_daily_aggregate(tmp_path):
+    """The provisional tier counts with the same code: a window over exactly one day gives the
+    stored day's rows."""
+    from tests.synthetic import sortie, store_day
+    from tw.baselines.aggregates import window_arrivals, window_counts
+    from tw.config import load_fleet
+
+    rows = [sortie(D, i, dest="ETAR") for i in range(6)] + [sortie(D, 9, minutes=20)]
+    store_day(tmp_path, D, rows)
+    fleet, mapper = load_fleet(), RegionMapper(load_regions())
+    assert build_aggregates(D, tmp_path, fleet, mapper, 30)
+    start = datetime(2026, 9, 15, tzinfo=UTC)
+    end = start + timedelta(days=1)
+    stored = read_day(tmp_path, "sorties", D).to_pylist()
+    assert (
+        window_counts(stored, start, end, fleet, mapper, 30)
+        == read_day(tmp_path, AGG_REGION_FAMILY, D).to_pylist()
+    )
+    assert (
+        window_arrivals(stored, start, end, fleet, mapper, 30)
+        == read_day(tmp_path, AGG_ARRIVALS, D).to_pylist()
+    )
+    # A window ending before they landed sees the flights but none of the arrivals.
+    early = start + timedelta(hours=9)
+    assert sum(r["sorties"] for r in window_counts(stored, start, early, fleet, mapper, 30)) > 0
+    assert window_arrivals(stored, start, early, fleet, mapper, 30) == []
