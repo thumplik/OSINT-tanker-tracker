@@ -74,7 +74,8 @@ SORTIE_SCHEMA = pa.schema(
 
 
 def partition_dir(root: Path, dataset: str, day: date) -> Path:
-    return root / dataset / f"date={day.isoformat()}"
+    """`<dataset>/date=D/`, or `<dataset>/as_of=D/` for snapshot datasets (SPEC §11)."""
+    return root / dataset / f"{_PARTITION_KEY.get(dataset, 'date')}={day.isoformat()}"
 
 
 def write_partition(
@@ -119,6 +120,8 @@ def read_day(root: Path, dataset: str, day: date) -> pa.Table:
     files = sorted(partition_dir(root, dataset, day).glob("part-*.parquet"))
     if not files:
         return _SCHEMAS[dataset].empty_table()
+    if len(files) == 1:
+        return pq.read_table(files[0])
     con = duckdb.connect()
     try:
         return con.sql(
@@ -136,6 +139,17 @@ _SCHEMAS = {
     "sorties": SORTIE_SCHEMA,
     "registry": REGISTRY_SCHEMA,
 }
+
+
+_PARTITION_KEY: dict[str, str] = {}
+
+
+def register_schema(dataset: str, schema: pa.Schema, key: str = "date") -> pa.Schema:
+    """Make `read_day` return an empty table of this schema for a missing partition. `key` is
+    the partition column: "date" for data of a day, "as_of" for snapshots taken on a day."""
+    _SCHEMAS[dataset] = schema
+    _PARTITION_KEY[dataset] = key
+    return schema
 
 
 def load_registry(root: Path, as_of: date) -> dict[str, str]:

@@ -25,6 +25,11 @@ sortie:
   seen_low_field_radius_km: 30
   lookback_days: 1              # days before D read to find flights airborne at midnight
 
+# Which sorties count toward D1 and D2 (owner decision, Oct 2026). A sortie counts once in each
+# region it flies in (any of its H3 r4 cells). Shorter sorties (pattern work, fragments) don't count.
+counting:
+  min_sortie_minutes: 30
+
 d1_volume_surge:
   window_hours: 24
   min_z: 3.0
@@ -33,8 +38,8 @@ d1_volume_surge:
 
 d2_novel_destination:
   window_hours: 72
-  max_baseline_arrivals: 1
-  min_arrivals: 2
+  max_baseline_arrivals: 1      # distinct aircraft of the family at the field in the baseline window
+  min_arrivals: 2               # distinct aircraft in the window (owner decision: not sorties)
 
 d3_unusual_orbit:
   min_heading_change_deg: 720
@@ -52,6 +57,7 @@ d5_route_shift:
 
 guards:
   coverage_min_ratio: 0.6       # suppress if regional traffic < 60% of its baseline
+  coverage_max_ratio: 1.67      # ... or > 167% (1 / 0.6): receivers came online (owner, Oct 2026)
   cooldown_hours: 12
 
 composite:

@@ -1,0 +1,41 @@
+[
+  {
+    "day": "2026-08-31",
+    "detector": "D1",
+    "evidence": {
+      "coverage_ratio": 1.0,
+      "family": "tanker",
+      "mad": 0.5,
+      "n_days": 8,
+      "normalized_ratio": 2.545,
+      "weekday": 0
+    },
+    "expected": 5.5,
+    "id": "52a10b96be8b4c25",
+    "observed": 14.0,
+    "region": "europe",
+    "score": 5.733,
+    "severity": "medium",
+    "status": "new"
+  },
+  {
+    "day": "2026-08-31",
+    "detector": "D2",
+    "evidence": {
+      "airfield": "LTAG",
+      "coverage_ratio": 1.0,
+      "family": "strategic_airlift",
+      "hexes": [
+        "ae0c17",
+        "ae0c18"
+      ]
+    },
+    "expected": 0.0,
+    "id": "c57384fd97bc395e",
+    "observed": 2.0,
+    "region": "eastern_med",
+    "score": 2.0,
+    "severity": "low",
+    "status": "new"
+  }
+]

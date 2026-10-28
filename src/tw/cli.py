@@ -173,6 +173,50 @@ def cmd_airfields_update(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _latest_points_day() -> date:
+    days = sorted(p.name[5:] for p in (_data_dir() / "points").glob("date=*"))
+    if not days:
+        raise SystemExit("no points loaded; run `tw load-history` first")
+    return date.fromisoformat(days[-1])
+
+
+def cmd_replay(args: argparse.Namespace) -> int:
+    """Retrospective: runs aggregates, baselines and detectors over stored days and prints the
+    alerts. Nothing is stored as an alert and nothing is posted (SPEC §11)."""
+    from tw.pipeline import Context, run_days
+
+    days = _range_days(args)
+    alerts, missing, _ = run_days(days, Context(_data_dir()))
+    for a in alerts:
+        day = (a.window_end - timedelta(days=1)).date()
+        what = a.evidence.get("airfield", "") + " " + str(a.evidence.get("family", ""))
+        print(
+            f"{day} {a.detector} {a.severity:<6} {a.status:<10} {a.region:<26} {what.strip():<28} "
+            f"observed {a.observed:g} vs expected {a.expected:g} (score {a.score:.1f})"
+        )
+    live = sum(a.status != "suppressed" for a in alerts)
+    print(
+        f"{len(days)} day(s), {len(missing)} without data: {live} alert(s), "
+        f"{len(alerts) - live} suppressed (retrospective, not stored)"
+    )
+    return 0
+
+
+def cmd_backtest(args: argparse.Namespace) -> int:
+    from tw.backtest import REPO, run_backtest
+
+    if args.from_:
+        days = _range_days(args)
+    else:
+        end = _latest_points_day()
+        start = end - timedelta(days=int(args.months * 365.25 / 12) - 1)
+        days = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+    path, alerts = run_backtest(days, _data_dir(), REPO / "reports")
+    live = sum(a.status != "suppressed" for a in alerts)
+    print(f"wrote {path} ({live} alerts, {len(alerts) - live} suppressed over {len(days)} days)")
+    return 0
+
+
 def _not_yet(milestone: str) -> int:
     print(f"not implemented yet (milestone {milestone}, see SPEC §14)", file=sys.stderr)
     return 2
@@ -221,9 +265,22 @@ def build_parser() -> argparse.ArgumentParser:
     p = airfields.add_parser("update", help="download OurAirports into config/airfields.csv")
     p.set_defaults(func=cmd_airfields_update)
 
+    p = sub.add_parser("replay", help="run the pipeline over stored days (retrospective)")
+    when = p.add_mutually_exclusive_group(required=True)
+    when.add_argument("--date", type=date.fromisoformat, help="one UTC day")
+    when.add_argument("--from", dest="from_", type=date.fromisoformat, help="first UTC day")
+    p.add_argument("--to", type=date.fromisoformat, help="last UTC day (with --from)")
+    p.add_argument("--speed", type=float, default=0, help="0 = as fast as possible (offline)")
+    p.set_defaults(func=cmd_replay)
+
+    p = sub.add_parser("backtest", help="write reports/backtest_<date>.md")
+    when = p.add_mutually_exclusive_group()
+    when.add_argument("--months", type=float, default=6, help="months ending at the latest day")
+    when.add_argument("--from", dest="from_", type=date.fromisoformat, help="first UTC day")
+    p.add_argument("--to", type=date.fromisoformat, help="last UTC day (with --from)")
+    p.set_defaults(func=cmd_backtest, date=None)
+
     for name, milestone in [
-        ("replay", "M3"),
-        ("backtest", "M3"),
         ("worker", "M4"),
         ("api", "M5"),
     ]:

@@ -4,7 +4,7 @@ from tw.publisher.settings import load_publisher_settings, may_post
 
 def test_fleet_families():
     fleet = load_fleet()
-    assert fleet.families_for_type("C30J") == ("tactical_airlift", "tanker")
+    assert fleet.families_for_type("C30J") == ("tactical_airlift",)  # KC-130J not separable
     assert fleet.families_for_type("k35r") == ("tanker",)
     assert fleet.families_for_type("DC10") == ()  # KC-10 retired, not tracked
     assert fleet.families_for_type(None) == ()
