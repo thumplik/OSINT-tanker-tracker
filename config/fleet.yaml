@@ -3,10 +3,12 @@ military_hex_block:
   start: "ae0000"
   end: "afffff"
 
-# A type code may belong to more than one family (C30J is both a tanker and tactical airlift).
+# A type code may belong to more than one family. C30J is tactical airlift only: the code covers
+# both the C-130J-30 airlifter and the USMC KC-130J tanker, which ADS-B can't tell apart, and
+# counting it twice doubled every alert (owner decision, Oct 2026).
 families:
   tanker:
-    types: [K35R, KC46, B762, C30J]
+    types: [K35R, KC46, B762]
   strategic_airlift:
     types: [C17, C5M]
   tactical_airlift:

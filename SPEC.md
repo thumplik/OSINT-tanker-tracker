@@ -53,7 +53,7 @@ Filter:
 
 | Family | Type codes (initial) |
 |---|---|
-| Tanker | K35R, KC46 and B762 (KC-46A; adsb.lol uses B762), C30J (KC-130J) |
+| Tanker | K35R, KC46 and B762 (KC-46A; adsb.lol uses B762). Not C30J: the code also covers the C-130J-30 airlifter, so USMC KC-130Js are counted as tactical airlift (decided Oct 2026) |
 | Strategic airlift | C17, C5M |
 | Tactical airlift | C130, C30J |
 
@@ -107,7 +107,7 @@ providers ──▶ ingest worker ──▶ raw store (JSONL.gz)
 - Starts at first airborne point; ends at landing (a ground run of ≥ 60 s; shorter is a touch-and-go) or a gap > 30 min. A missing ground flag is never a landing.
 - A longer gap is a coverage hole, not a landing, and does not end the sortie when the aircraft is ≥ 10,000 ft on both sides, the gap is ≤ 6 h, and the implied speed is ≤ 600 kt (decided Oct 2026: real data has hundreds of such gaps per week over oceans and receiver holes).
 - `origin_icao` / `dest_icao`: nearest airfield within 15 km of the first (last) point below 4,000 ft AGL (chosen from a sweep, Oct 2026; was 10 km / 3,000 ft), including the ground point next to takeoff (landing); `null` if unresolved or first (last) seen above that height. ICAO code where one exists, else the OurAirports ident. Airfields: OurAirports, runway ≥ 3,000 ft (`config/airfields.csv`, `tw airfields update`).
-- Fields: `sortie_id, hex, type, families[], callsign, start_ts, end_ts, origin_icao, dest_icao, start/end lat-lon, h3_cells[], max_alt, n_points, low_quality_share, start_seen_low, end_seen_low, end_reason, is_open, start_truncated, is_orbit, orbit_hours`. `families[]` replaces a single family because C30J is in two. Orbit fields are filled by D3 (M6).
+- Fields: `sortie_id, hex, type, families[], callsign, start_ts, end_ts, origin_icao, dest_icao, start/end lat-lon, h3_cells[], max_alt, n_points, low_quality_share, start_seen_low, end_seen_low, end_reason, is_open, start_truncated, is_orbit, orbit_hours`. `families[]` replaces a single family because a type may be in more than one. Orbit fields are filled by D3 (M6).
 - `sorties/date=D/` holds every sortie with a point in D, built from points of D and the day before only (never later days). A sortie still airborne at the end of D is stored open, with no destination, and the next day's build closes it under the same `sortie_id`. Multi-day counts dedupe by `sortie_id`, latest partition ≤ as_of.
 - All thresholds are in `config/detectors.yaml` → `sortie:`.
 
@@ -147,6 +147,8 @@ For each key, an alert requires all four of:
 
 - Rebuilt nightly from a trailing 56-day window (configurable)
 - Keyed by `(region, family, day_of_week)` and, where needed, `(airfield, family)` and `(route, family)`
+- Inputs are per-day aggregates (`aggregates/*/date=D/`). A sortie counts once in **every region it flies in** (any of its H3 r4 cells), and sorties shorter than `counting.min_sortie_minutes` (30) don't count (both decided Oct 2026). Days without data are skipped, never zero.
+- v1 evaluates whole UTC days (window end = midnight); the M4 worker adds rolling windows over the same functions.
 - Robust statistics: median and MAD. No means/standard deviations on sparse counts.
 - Minimum history: a key with fewer than 4 weeks of data cannot alert. It is shown as "insufficient baseline".
 
@@ -157,16 +159,16 @@ Every detector is a pure function: `(window_data, baseline, config) -> list[Aler
 | ID | Name | Fires when |
 |---|---|---|
 | D1 | Volume surge | Region × family sortie count over 24h has robust z ≥ 3.0 **and** count ≥ `min_count` **and** coverage-normalized ratio also exceeds threshold |
-| D2 | Novel destination | Arrivals at an airfield that saw ≤ 1 arrival of that family in the baseline window, with ≥ 2 arrivals in 72h |
+| D2 | Novel destination | ≥ 2 distinct aircraft of a family arriving at an airfield in 72h, where the baseline window (before those 72h) saw ≤ 1 distinct aircraft of that family there. Counts aircraft, not sorties (decided Oct 2026). Evaluated daily, so one event can alert on each day of its window |
 | D3 | Unusual orbit | Tanker orbit-hours (cumulative heading change ≥ 720° within 40 km radius) in an r4 cell above that cell's baseline p95 |
 | D4 | Airlift convergence | ≥ N distinct strategic-airlift hexes arriving at one airfield or region within 48h, robust z ≥ 3.0 |
 | D5 | Route shift | Share of a family's sorties on a route pair departs from baseline share by ≥ X points over 72h |
 
 ### Guards (always on)
 
-- **Coverage guard**: suppress if regional total traffic is below 60% of its own baseline. Fewer receivers means fake drops; recovered receivers mean fake surges.
+- **Coverage guard**: suppress if regional total traffic is below 60% or above 167% of its own weekday baseline (the upper bound added Oct 2026, after Gulf days at 5-7x). Fewer receivers means fake drops; recovered receivers mean fake surges. A region with no coverage baseline cannot be checked and is suppressed. Suppressed alerts keep their record and reason.
 - **Exercise calendar**: optional `config/known_events.yaml` (announced exercises, air shows). Matching alerts are downgraded and labeled, not hidden.
-- **Cooldown**: same detector + region cannot alert again within 12h unless severity rises.
+- **Cooldown**: same detector + region cannot alert again within 12h unless severity rises. This includes alerts from the same run: the strongest (severity, then score) is kept and the rest are suppressed on the record.
 
 ### Composite scoring
 
@@ -214,10 +216,12 @@ Pick any past date (or date range) and see the system exactly as it would have l
 
 ### Point-in-time correctness (non-negotiable)
 
-- Baselines are stored as dated snapshots (`baselines/as_of=YYYY-MM-DD/`). Viewing a past day always uses the snapshot from that day, never today's baseline. This prevents future data leaking into the past.
+- Baselines are stored as dated snapshots (`baselines/<table>/as_of=YYYY-MM-DD/`), built from days before the snapshot date only. Viewing a past day always uses the snapshot from that day, never today's baseline. This prevents future data leaking into the past.
 - The hex → type registry (§3) is stored per day (`registry/date=YYYY-MM-DD/`). A day's untyped hexes are resolved only from registry entries dated that day or earlier.
 - Historical alerts are shown exactly as they were created (status, wording, draft). Retrospective re-runs are a separate, clearly labeled layer and never overwrite them.
-- Every detector and baseline run records its config hash and code version, so a past alert can be reproduced.
+- Every detector and baseline run records its config hash and code version, so a past alert can be reproduced. The hash covers the effective settings of the run, not just the files on disk.
+- Baseline snapshots are write-once: replaying a past day reuses its snapshot even if older data was backfilled since. Rebuilding is an explicit choice (`--rebuild-baselines`), e.g. after a config change; the backtest report counts snapshots built under a different config.
+- The coverage guard checks every day an alert rests on (for D2, each day an arrival in its window landed), not only the last day.
 
 ### Storage and API
 
