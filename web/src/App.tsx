@@ -2,10 +2,18 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { loadDay, loadIndex, loadMeta, loadR6, NotFound } from "./data";
 import { cellsFor } from "./heat";
 import { MapView } from "./MapView";
-import { AlertsPanel, RegionsPanel, SortiesPanel } from "./panels";
-import { parseState, serializeState, stepDate, type Tab, type ViewState } from "./state";
+import { AlertsPanel, forFamily, RegionsPanel, SortiesPanel, TheatersPanel } from "./panels";
+import { parseState, serializeState, stepDate, TABS, type ViewState } from "./state";
+import { transitArcs } from "./theater";
 import type { DayR6, DayView, SiteIndex, SiteMeta } from "./types";
 import { familyLabel } from "./wording";
+
+const TAB_LABEL: Record<string, string> = {
+  alerts: "Alerts",
+  regions: "Regions",
+  theaters: "Theaters",
+  sorties: "Sorties",
+};
 
 type Load<T> = { status: "loading" } | { status: "ok"; data: T } | { status: "missing" | "error"; message: string };
 
@@ -95,6 +103,20 @@ export function App() {
     state.res === 6 ? "aircraft (day)" : state.hour === null ? "aircraft-hours" : "aircraft";
   const families = view?.heat.families ?? ["all"];
   const onRegion = useCallback((id: string | null) => update({ region: id }), [update]);
+  const onCcmd = useCallback((id: string | null) => update({ ccmd: id }), [update]);
+  const theaterTab = state.tab === "theaters" && !!meta?.ccmds;
+  const arcs = useMemo(
+    () =>
+      view?.theaters && meta?.ccmds
+        ? transitArcs(view.theaters.transits, meta.ccmds, view.theaters.home, state.family)
+        : [],
+    [view, meta, state.family],
+  );
+  const liveAlerts = view
+    ? forFamily(view.alerts, state.family).filter(
+        (a) => a.tier === "official" && a.status !== "suppressed",
+      ).length
+    : 0;
 
   if (fatal) {
     return (
@@ -172,6 +194,10 @@ export function App() {
             regions={meta?.regions ?? []}
             selectedRegion={state.region}
             onRegion={onRegion}
+            ccmds={theaterTab ? meta?.ccmds : undefined}
+            arcs={arcs}
+            selectedCcmd={state.ccmd}
+            onCcmd={onCcmd}
           />
           <div className="map-controls">
             <div className="seg" role="group" aria-label="Resolution">
@@ -207,17 +233,15 @@ export function App() {
 
         <aside className="panel">
           <nav className="tabs" role="tablist">
-            {(["alerts", "regions", "sorties"] as Tab[]).map((t) => (
+            {TABS.map((t) => (
               <button
                 key={t}
                 role="tab"
                 aria-selected={state.tab === t}
                 onClick={() => update({ tab: t })}
               >
-                {t === "alerts" ? "Alerts" : t === "regions" ? "Regions" : "Sorties"}
-                {t === "alerts" && indexDay && indexDay.alerts > 0 && (
-                  <span className="count">{indexDay.alerts}</span>
-                )}
+                {TAB_LABEL[t]}
+                {t === "alerts" && liveAlerts > 0 && <span className="count">{liveAlerts}</span>}
               </button>
             ))}
           </nav>
@@ -227,7 +251,7 @@ export function App() {
               <p className="muted">{day.message}</p>
             )}
             {view && state.tab === "alerts" && (
-              <AlertsPanel view={view} meta={meta} />
+              <AlertsPanel view={view} meta={meta} family={state.family} />
             )}
             {view && state.tab === "regions" && (
               <RegionsPanel
@@ -236,6 +260,15 @@ export function App() {
                 family={state.family}
                 selected={state.region}
                 onRegion={onRegion}
+              />
+            )}
+            {view && state.tab === "theaters" && (
+              <TheatersPanel
+                view={view}
+                meta={meta}
+                family={state.family}
+                selected={state.ccmd}
+                onCcmd={onCcmd}
               />
             )}
             {view && state.tab === "sorties" && (

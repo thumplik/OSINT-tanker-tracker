@@ -1,4 +1,4 @@
-// Shapes of the files written by `tw export` (src/tw/views/day.py). Schema version 1.
+// Shapes of the files written by `tw export` (src/tw/views/day.py). Schema version 2.
 
 export type Tier = "official" | "provisional";
 
@@ -9,9 +9,18 @@ export interface Region {
   boxes: [number, number, number, number][]; // [lat_min, lat_max, lon_min, lon_max]
 }
 
+export interface Ccmd {
+  id: string;
+  name: string;
+  status: "watch" | "alerting";
+  anchor: [number, number]; // [lon, lat]
+  cells: string[]; // H3 res-2 cells whose centre is in this CCMD (boundaries approximate)
+}
+
 export interface SiteMeta {
   schema: number;
   regions: Region[];
+  ccmds?: Ccmd[]; // schema 2+
   families: Record<string, string[]>;
   attribution: string[];
   official_alerts_from: string | null;
@@ -90,6 +99,65 @@ export interface SortieRow {
   counted: boolean;
 }
 
+export interface Judged {
+  observed: number;
+  median: number | null;
+  n: number;
+  z: number | null; // null: insufficient baseline
+}
+
+export interface TheaterRow {
+  ccmd: string;
+  family: string;
+  by_type: Record<string, number>;
+  inventory: Judged;
+  entries: Judged | null; // null: a day of the window has no data
+  exits: Judged | null;
+  transits: Judged | null; // trips from home that ended in this CCMD
+}
+
+export interface MoveRow {
+  hex: string;
+  type: string;
+  family: string;
+  ts: string;
+  src: string;
+  dst: string;
+  quality: "ground" | "aloft" | "last_seen";
+  sortie_id: string;
+  src_airfield: string | null;
+  dst_airfield: string | null;
+}
+
+export interface TransitRow {
+  hex: string;
+  type: string;
+  family: string;
+  depart_ts: string;
+  arrive_ts: string;
+  resolved_ts: string | null;
+  dest: string;
+  via: string[];
+  resolution: "returned" | "stayed" | "en_route";
+  dest_airfield: string | null;
+}
+
+export interface Theaters {
+  home: string;
+  baseline_as_of: string | null;
+  window_days: number;
+  window_complete: boolean;
+  max_age_days: number;
+  dwell_hours: number;
+  min_blocks: number;
+  rows: TheaterRow[];
+  history: Record<string, (number | null)[]>; // "ccmd|family" -> daily inventory, oldest first
+  coverage: { ccmd: string; aircraft_hours: number; median: number | null; ratio: number | null }[];
+  moves: MoveRow[];
+  transits: TransitRow[]; // resolved within the window
+  en_route: TransitRow[];
+}
+
 export interface DayView {
   meta: {
     schema: number;
@@ -112,6 +180,7 @@ export interface DayView {
   coverage: CoverageRow[];
   alerts: AlertRow[];
   sorties: SortieRow[];
+  theaters?: Theaters; // schema 2+
 }
 
 export interface DayR6 extends Heat {

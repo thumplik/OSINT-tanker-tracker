@@ -35,10 +35,32 @@ from tw.baselines.build import (
 from tw.config import Fleet, load_fleet, load_regions, load_yaml
 from tw.detectors.d1_volume_surge import detect_d1
 from tw.detectors.d2_novel_destination import detect_d2
+from tw.detectors.d6_flow_change import detect_d6
+from tw.detectors.d7_inventory_shift import detect_d7
 from tw.detectors.guards import apply_cooldown, apply_coverage_guard, apply_known_events
-from tw.detectors.types import Alert, Arrival, KeyBaseline, RegionCount, Window, as_window
+from tw.detectors.types import (
+    Alert,
+    Arrival,
+    FlowCount,
+    InventoryCount,
+    KeyBaseline,
+    RegionCount,
+    Window,
+    as_window,
+)
 from tw.provenance import code_version, effective_config_hash
 from tw.store.parquet import read_day
+from tw.theater.aggregates import (
+    AGG_CCMD_COVERAGE,
+    AGG_INVENTORY,
+    BL_CCMD,
+    build_theater,
+    build_theater_baseline,
+    day_end,
+    inventory_totals,
+    window_sums,
+)
+from tw.theater.ccmd import CcmdMapper, Ccmds, load_ccmds
 from tw.tracks.sorties import latest_sorties
 
 
@@ -55,12 +77,20 @@ class Context:
     )
     fleet: Fleet = field(default_factory=load_fleet)
     mapper: RegionMapper = field(default_factory=lambda: RegionMapper(load_regions()))
+    ccmds: Ccmds = field(default_factory=load_ccmds)
     rebuild_baselines: bool = False  # snapshots are write-once unless asked (SPEC §11)
     cache: AggregateCache | None = None
+    theater_cache: AggregateCache | None = None
 
     def __post_init__(self) -> None:
+        self.ccmd_mapper = CcmdMapper(self.ccmds)
         if self.cache is None:
             self.cache = AggregateCache(self.data_dir, ensure=self.build_aggregates)
+        if self.theater_cache is None:
+            self.theater_cache = AggregateCache(self.data_dir, ensure=self.build_theater)
+
+    def build_theater(self, day: date) -> bool:
+        return build_theater(day, self.data_dir, self.ccmd_mapper, self.cfg, self.ccmds.home)
 
     def build_aggregates(self, day: date) -> bool:
         minutes = float(self.cfg["counting"]["min_sortie_minutes"])
@@ -90,6 +120,37 @@ class DayInputs:
     d2_window: Window
     provisional: bool = False  # live data, coverage unchecked: never official, never posted
     baseline_as_of: date | None = None  # snapshot used; for official runs this is `day`
+    theater: TheaterInputs | None = None  # official runs only (M5c)
+
+
+@dataclass(frozen=True)
+class TheaterInputs:
+    """D6/D7 inputs for the flow window ending with one day (SPEC §8, M5c)."""
+
+    window: Window
+    flows: list[FlowCount]  # empty when a day of the window is missing
+    inventory: list[InventoryCount]
+    flow_baseline: dict[tuple[str, str, str], KeyBaseline]
+    inventory_baseline: dict[tuple[str, str], KeyBaseline]
+    coverage_by_day: dict[date, dict[str, float]]  # CCMD aircraft-hours, every window day
+    coverage_baseline_all: dict[tuple[str, int], KeyBaseline]  # (ccmd, weekday)
+
+    def coverage_ratio(self) -> dict[str, float | None]:
+        """Per CCMD, the mean of its daily traffic / weekday median over the window; None when
+        any day can't be compared."""
+        out: dict[str, float | None] = {}
+        ccmds = {c for day in self.coverage_by_day.values() for c in day}
+        for c in sorted(ccmds | {k[0] for k in self.coverage_baseline_all}):
+            ratios: list[float] = []
+            for d in self.window.days:
+                bl = self.coverage_baseline_all.get((c, d.weekday()))
+                obs = self.coverage_by_day.get(d, {}).get(c)
+                if bl is None or obs is None or bl.median <= 0:
+                    ratios = []
+                    break
+                ratios.append(obs / bl.median)
+            out[c] = sum(ratios) / len(ratios) if ratios else None
+        return out
 
 
 def prepare_day(day: date, ctx: Context) -> DayInputs | None:
@@ -132,7 +193,55 @@ def prepare_day(day: date, ctx: Context) -> DayInputs | None:
         d1_window=as_window(day, float(ctx.cfg["d1_volume_surge"]["window_hours"])),
         d2_window=as_window(day, float(ctx.cfg["d2_novel_destination"]["window_hours"])),
         baseline_as_of=day,
+        theater=prepare_theater(day, ctx),
     )
+
+
+def prepare_theater(day: date, ctx: Context) -> TheaterInputs | None:
+    """Build `day`'s theater aggregates and (if absent) its snapshot, then load D6/D7 inputs."""
+    assert ctx.theater_cache is not None
+    cache = ctx.theater_cache
+    if cache.get(AGG_INVENTORY, day) is None:
+        return None
+    th = ctx.cfg["theater"]
+    flow_days = int(th["flow_window_days"])
+    families = sorted(ctx.fleet.families)
+    build_theater_baseline(
+        day, ctx.data_dir, cache, ctx.cfg, ctx.ccmds.ids, families, ctx.rebuild_baselines
+    )
+    flow_bl: dict[tuple[str, str, str], KeyBaseline] = {}
+    inv_bl: dict[tuple[str, str], KeyBaseline] = {}
+    cov_bl: dict[tuple[str, int], KeyBaseline] = {}
+    for r in read_day(ctx.data_dir, BL_CCMD, day).to_pylist():
+        b = KeyBaseline(r["median"], r["mad"], r["n"])
+        if r["series"] == "inventory":
+            inv_bl[(r["ccmd"], r["family"])] = b
+        elif r["series"] == "coverage":
+            cov_bl[(r["ccmd"], r["weekday"])] = b
+        else:
+            flow_bl[(r["ccmd"], r["family"], r["series"])] = b
+    sums = window_sums(cache, day, flow_days)
+    flows = (
+        []
+        if sums is None
+        else [
+            FlowCount(c, f, s, sums.get((c, f, s), 0))
+            for c in ctx.ccmds.ids
+            for f in families
+            for s in ("entries", "exits", "transits")
+        ]
+    )
+    totals = inventory_totals(cache.get(AGG_INVENTORY, day) or [])
+    inventory = [
+        InventoryCount(c, f, totals.get((c, f), 0)) for c in ctx.ccmds.ids for f in families
+    ]
+    end = day_end(day)
+    window = Window(end - timedelta(days=flow_days), end)
+    coverage_by_day = {
+        d: {r["ccmd"]: float(r["aircraft_hours"]) for r in cache.get(AGG_CCMD_COVERAGE, d) or []}
+        for d in window.days
+    }
+    return TheaterInputs(window, flows, inventory, flow_bl, inv_bl, coverage_by_day, cov_bl)
 
 
 def _d2_history_days(ctx: Context, as_of: date) -> int:
@@ -239,6 +348,15 @@ def detect_day(
     ) + detect_d2(
         inputs.d2_window, inputs.arrivals, inputs.airfield_baseline, inputs.d2_history_days, cfg
     )
+    th = inputs.theater
+    theater_alerts: list[Alert] = []
+    if th is not None and not inputs.provisional:
+        theater_alerts = detect_d6(
+            th.window, th.flows, th.flow_baseline, th.coverage_ratio(), cfg
+        ) + detect_d7(th.window, th.inventory, th.inventory_baseline, cfg)
+        theater_alerts = apply_coverage_guard(
+            theater_alerts, th.coverage_by_day, th.coverage_baseline_all, cfg
+        )
     if inputs.provisional:
         tier = {
             "tier": "provisional",
@@ -250,7 +368,7 @@ def detect_day(
         alerts = apply_coverage_guard(
             alerts, inputs.coverage_by_day, inputs.coverage_baseline_all, cfg
         )
-    alerts = apply_known_events(alerts, events)
+    alerts = apply_known_events(alerts + theater_alerts, events)
     alerts = apply_cooldown(alerts, recent, cfg)
     config, version = provenance
     return [replace(a, config_hash=config, code_version=version) for a in alerts]

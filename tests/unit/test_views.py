@@ -162,3 +162,55 @@ def test_site_meta_lists_regions_families_and_attribution(tmp_path):
     assert meta["regions"][-1]["id"] == "other"
     assert "C17" in meta["families"]["strategic_airlift"]
     assert any("ODbL" in a for a in meta["attribution"])
+
+
+def theater_history(root: Path) -> None:
+    """history() with D's theater aggregates and snapshot, plus two C-17s from Dover into Al
+    Udeid on D (another family than the Europe tankers)."""
+    history(root)
+    for day in days_between(D - timedelta(days=56), D - timedelta(days=1)):
+        assert Context(root).build_theater(day)
+    rows = [sortie(D, i, dest="ETAR") for i in range(9)] + [
+        {
+            **sortie(D, 50 + i, dest="OTBH", end=(25.12, 51.32), hex_code=f"ae0c1{i}"),
+            "type": "C17",
+            "families": ["strategic_airlift"],
+            "start_lat": 39.13,
+            "start_lon": -75.47,
+            "origin_icao": "KDOV",
+        }
+        for i in range(2)
+    ]
+    store_day(root, D, rows)
+    ctx = Context(root)
+    assert ctx.build_theater(D) and ctx.build_aggregates(D)
+
+
+def test_theaters_keep_families_apart_and_judge_against_the_snapshot(tmp_path):
+    theater_history(tmp_path)
+    from tw.pipeline import prepare_theater
+
+    assert prepare_theater(D, Context(tmp_path)) is not None  # builds the snapshot
+    th = day_view(ViewContext(tmp_path), D, NOW)["theaters"]
+    rows = {(r["ccmd"], r["family"]): r for r in th["rows"]}
+    tankers, airlift = rows[("eucom", "tanker")], rows[("centcom", "strategic_airlift")]
+    assert tankers["inventory"]["observed"] == 9 and tankers["by_type"] == {"K35R": 9}
+    assert tankers["inventory"]["median"] == 5.0 and tankers["inventory"]["z"] > 0
+    assert airlift["inventory"]["observed"] == 2 and airlift["by_type"] == {"C17": 2}
+    assert rows[("centcom", "tanker")]["inventory"]["observed"] == 0
+    assert airlift["entries"]["observed"] == 2  # one exit from NORTHCOM, one entry, per flight
+    assert rows[("northcom", "strategic_airlift")]["exits"]["observed"] == 2
+    assert [(m["src"], m["dst"]) for m in th["moves"]] == [("northcom", "centcom")] * 2
+    assert len(th["history"]["eucom|tanker"]) == 56 and th["history"]["eucom|tanker"][-1] == 9
+    assert th["window_complete"] and th["baseline_as_of"] == D.isoformat()
+
+
+def test_theaters_ignore_later_data(tmp_path):
+    theater_history(tmp_path)
+    before = day_view(ViewContext(tmp_path), D, NOW)["theaters"]
+    later = D + timedelta(days=1)
+    store_day(
+        tmp_path, later, [sortie(later, i, dest="ETAR", hex_code=f"af{i:04x}") for i in range(30)]
+    )
+    assert Context(tmp_path).build_theater(later)
+    assert day_view(ViewContext(tmp_path), D, NOW)["theaters"] == before

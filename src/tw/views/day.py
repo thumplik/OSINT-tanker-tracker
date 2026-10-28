@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -23,6 +24,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import duckdb
+import h3
 
 from tw.baselines.aggregates import (
     AGG_COVERAGE,
@@ -30,17 +32,31 @@ from tw.baselines.aggregates import (
     RegionMapper,
     count_sorties,
 )
-from tw.baselines.build import BL_COVERAGE, BL_REGION_FAMILY, latest_snapshot
+from tw.baselines.build import BL_COVERAGE, BL_REGION_FAMILY, AggregateCache, latest_snapshot
 from tw.baselines.stats import robust_z_from
 from tw.config import Fleet, Regions, load_fleet, load_regions, load_yaml
 from tw.detectors.types import Alert
 from tw.provenance import code_version, effective_config_hash
 from tw.store.alerts import OFFICIAL, PROVISIONAL, read_alerts
 from tw.store.parquet import partition_dir, read_day
+from tw.theater.aggregates import (
+    AGG_CCMD_COVERAGE,
+    AGG_INVENTORY,
+    AGG_MOVES,
+    AGG_TRANSITS,
+    BL_CCMD,
+    SERIES,
+    daily_counts,
+    inventory_totals,
+    latest_theater_snapshot,
+    lookback_sorties,
+    theater_day,
+)
+from tw.theater.ccmd import CcmdMapper, Ccmds, load_ccmds
 
 Tier = Literal["official", "provisional"]
 ALL = "all"  # pseudo-family: any tracked type, each aircraft once
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2: theaters (M5c)
 
 
 @dataclass
@@ -49,9 +65,12 @@ class ViewContext:
     cfg: dict[str, Any] = field(default_factory=lambda: load_yaml("detectors.yaml"))
     fleet: Fleet = field(default_factory=load_fleet)
     regions: Regions = field(default_factory=load_regions)
+    ccmds: Ccmds = field(default_factory=load_ccmds)
 
     def __post_init__(self) -> None:
         self.mapper = RegionMapper(self.regions)
+        self.ccmd_mapper = CcmdMapper(self.ccmds)
+        self.cache = AggregateCache(self.data_dir)  # no `ensure`: views never write
 
     @property
     def live_dir(self) -> Path:
@@ -249,6 +268,137 @@ def _sortie(s: Mapping[str, Any], ctx: ViewContext, min_minutes: float) -> dict[
     }
 
 
+def _ts_rows(rows: list[dict[str, Any]], keys: tuple[str, ...]) -> list[dict[str, Any]]:
+    return [{**r, **{k: _iso(r[k]) for k in keys}} for r in rows]
+
+
+def _theaters(ctx: ViewContext, day: date, tier: Tier) -> dict[str, Any]:
+    """CCMD inventory, entries/exits and transits from home (M5c). Official days read the
+    stored theater aggregates; a live day computes its own the same way (`theater_day`) over
+    official sorties where they exist and live ones after. Earlier days of the flow window always
+    come from aggregates. Families are never summed together."""
+    th = ctx.cfg["theater"]
+    flow_days = int(th["flow_window_days"])
+    families = ctx.families
+    if tier == "official":
+        today = {
+            "inventory": ctx.cache.get(AGG_INVENTORY, day) or [],
+            "moves": ctx.cache.get(AGG_MOVES, day) or [],
+            "transits": ctx.cache.get(AGG_TRANSITS, day) or [],
+        }
+        sorties = lookback_sorties([ctx.data_dir], day, int(th["lookback_days"]))
+        en_route = theater_day(sorties, day, ctx.ccmd_mapper, ctx.cfg, ctx.ccmds.home)["en_route"]
+        built = ctx.cache.get(AGG_INVENTORY, day) is not None
+    else:
+        sorties = lookback_sorties([ctx.data_dir, ctx.live_dir], day, int(th["lookback_days"]))
+        live = theater_day(sorties, day, ctx.ccmd_mapper, ctx.cfg, ctx.ccmds.home)
+        today, en_route, built = live, live["en_route"], True
+
+    # Flow sums over the window: today from `today`, earlier days from aggregates.
+    sums: dict[tuple[str, str, str], int] = defaultdict(int)
+    complete = built
+    for m in today["moves"]:
+        sums[(m["dst"], m["family"], "entries")] += 1
+        sums[(m["src"], m["family"], "exits")] += 1
+    for t in today["transits"]:
+        sums[(t["dest"], t["family"], "transits")] += 1
+    recent_transits = list(today["transits"])
+    for back in range(1, flow_days):
+        d = day - timedelta(days=back)
+        counts = daily_counts(ctx.cache, d)
+        if counts is None:
+            complete = False
+            continue
+        for k, v in counts.items():
+            sums[k] += v
+        recent_transits += ctx.cache.get(AGG_TRANSITS, d) or []
+
+    as_of = latest_theater_snapshot(ctx.data_dir, day)
+    bl: dict[tuple[str, str, str], dict[str, Any]] = {}
+    cov_bl: dict[str, dict[str, Any]] = {}
+    if as_of is not None:
+        for r in read_day(ctx.data_dir, BL_CCMD, as_of).to_pylist():
+            if r["series"] == "coverage":
+                if r["weekday"] == day.weekday():
+                    cov_bl[r["ccmd"]] = r
+            else:
+                bl[(r["ccmd"], r["family"], r["series"])] = r
+    min_blocks = int(th["min_blocks"])
+    min_days = int(ctx.cfg["baseline"]["min_history_days"])
+    base_cfg = ctx.cfg["baseline"]
+
+    def judged(observed: float, key: tuple[str, str, str], need: int) -> dict[str, Any]:
+        b = bl.get(key)
+        ok = b is not None and b["n"] >= need
+        return {
+            "observed": observed,
+            "median": b["median"] if b else None,
+            "n": b["n"] if b else 0,
+            "z": round(robust_z_from(observed, b["median"], b["mad"], base_cfg), 2)
+            if b and ok
+            else None,
+        }
+
+    by_type: dict[tuple[str, str], dict[str, int]] = defaultdict(dict)
+    for r in today["inventory"]:
+        by_type[(r["ccmd"], r["family"])][r["type"]] = int(r["aircraft"])
+    totals = inventory_totals(today["inventory"])
+    rows = []
+    for c in ctx.ccmds.ids:
+        for f in families:
+            row: dict[str, Any] = {
+                "ccmd": c,
+                "family": f,
+                "by_type": dict(sorted(by_type[(c, f)].items())),
+                "inventory": judged(totals.get((c, f), 0), (c, f, "inventory"), min_days),
+            }
+            for s in SERIES:
+                row[s] = judged(sums.get((c, f, s), 0), (c, f, s), min_blocks) if complete else None
+            rows.append(row)
+
+    history: dict[str, list[int | None]] = {}
+    span = int(ctx.cfg["baseline"]["window_days"])
+    for back in range(span - 1, -1, -1):
+        d = day - timedelta(days=back)
+        inv = today["inventory"] if back == 0 else ctx.cache.get(AGG_INVENTORY, d)
+        tot = None if inv is None else inventory_totals(inv)
+        for c in ctx.ccmds.ids:
+            for f in families:
+                value = None if tot is None else tot.get((c, f), 0)
+                history.setdefault(f"{c}|{f}", []).append(value)
+
+    coverage = []
+    for r in (ctx.cache.get(AGG_CCMD_COVERAGE, day) or []) if tier == "official" else []:
+        cb = cov_bl.get(r["ccmd"])
+        med = cb["median"] if cb else None
+        coverage.append(
+            {
+                "ccmd": r["ccmd"],
+                "aircraft_hours": r["aircraft_hours"],
+                "median": med,
+                "ratio": round(r["aircraft_hours"] / med, 3) if med else None,
+            }
+        )
+    return {
+        "home": ctx.ccmds.home,
+        "baseline_as_of": as_of.isoformat() if as_of else None,
+        "window_days": flow_days,
+        "window_complete": complete,
+        "max_age_days": int(th["max_age_days"]),
+        "dwell_hours": float(th["dwell_hours"]),
+        "min_blocks": min_blocks,
+        "rows": rows,
+        "history": history,
+        "coverage": coverage,
+        "moves": _ts_rows(sorted(today["moves"], key=lambda m: (m["ts"], m["hex"])), ("ts",)),
+        "transits": _ts_rows(
+            sorted(recent_transits, key=lambda t: (t["resolved_ts"], t["hex"])),
+            ("depart_ts", "arrive_ts", "resolved_ts"),
+        ),
+        "en_route": _ts_rows(en_route, ("depart_ts", "arrive_ts", "resolved_ts")),
+    }
+
+
 def day_view(ctx: ViewContext, day: date, now: datetime) -> dict[str, Any] | None:
     """The dashboard's view of `day`, or None when no data exists for it."""
     tier = day_tier(ctx, day)
@@ -282,6 +432,7 @@ def day_view(ctx: ViewContext, day: date, now: datetime) -> dict[str, Any] | Non
         "coverage": _coverage_rows(ctx, day, tier, as_of),
         "alerts": _alerts(ctx, day),
         "sorties": [_sortie(s, ctx, min_minutes) for s in sorties],
+        "theaters": _theaters(ctx, day, tier),
     }
 
 
@@ -298,6 +449,7 @@ def day_heat_r6(ctx: ViewContext, day: date) -> dict[str, Any] | None:
 def site_meta(ctx: ViewContext) -> dict[str, Any]:
     """Static lookups: regions (boxes, status), families and their types, data attribution."""
     providers = load_yaml("providers.yaml")
+    cells = ccmd_cells(ctx)
     used = {"adsb_lol", "ourairports", *providers["live"]["order"]}  # history, airfields, live
     return {
         "schema": SCHEMA_VERSION,
@@ -306,9 +458,32 @@ def site_meta(ctx: ViewContext) -> dict[str, Any]:
             for r in ctx.regions.regions
         ],
         "families": {f: sorted(ctx.fleet.families[f]) for f in ctx.families},
+        "ccmds": [
+            {
+                "id": c.id,
+                "name": c.name,
+                "status": c.status,
+                "anchor": list(c.anchor),
+                "cells": cells[c.id],
+            }
+            for c in ctx.ccmds.ccmds
+        ],
         "attribution": sorted({providers["attribution"][p] for p in used}),
         "official_alerts_from": _official_alerts_from(ctx),
     }
+
+
+CCMD_MAP_RESOLUTION = 2  # ~150 km cells: CCMD areas on the map, which never overlap
+
+
+def ccmd_cells(ctx: ViewContext) -> dict[str, list[str]]:
+    """Every H3 cell at `CCMD_MAP_RESOLUTION` by the CCMD holding its centre. The configured
+    polygons overlap (first match wins), so the map draws these cells instead."""
+    out: dict[str, list[str]] = {c: [] for c in ctx.ccmds.ids}
+    for base in sorted(h3.get_res0_cells()):
+        for cell in sorted(h3.cell_to_children(base, CCMD_MAP_RESOLUTION)):
+            out[ctx.ccmd_mapper.cell(cell)].append(cell)
+    return out
 
 
 def _official_alerts_from(ctx: ViewContext) -> str | None:

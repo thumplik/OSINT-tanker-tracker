@@ -3,7 +3,7 @@
 import type { AlertRow, SiteMeta } from "./types";
 
 export const FAMILY_LABEL: Record<string, string> = {
-  all: "All tracked",
+  all: "All tracked (mixed)",
   tanker: "Tankers",
   strategic_airlift: "Strategic airlift",
   tactical_airlift: "Tactical airlift",
@@ -20,8 +20,13 @@ export function familyLabel(f: string): string {
   return FAMILY_LABEL[f] ?? f.replace(/_/g, " ");
 }
 
+/** A region or a CCMD by id. */
 export function regionName(meta: SiteMeta | null, id: string): string {
-  return meta?.regions.find((r) => r.id === id)?.name ?? id;
+  return (
+    meta?.regions.find((r) => r.id === id)?.name ??
+    meta?.ccmds?.find((c) => c.id === id)?.name ??
+    id.toUpperCase()
+  );
 }
 
 function cap(s: string): string {
@@ -42,6 +47,16 @@ export function alertTitle(a: AlertRow, meta: SiteMeta | null): string {
   if (a.detector === "D2") {
     return `${cap(family)} at ${String(a.evidence.airfield ?? "?")}, not seen recently`;
   }
+  if (a.detector === "D6") {
+    const series = String(a.evidence.series ?? "");
+    if (series === "entries") return `${cap(family)} arrivals into ${region} above normal`;
+    if (series === "exits") return `${cap(family)} departures from ${region} above normal`;
+    return `${cap(family)} transits from the US to ${region} above normal`;
+  }
+  if (a.detector === "D7") {
+    const dir = a.evidence.direction === "down" ? "below" : "above";
+    return `${cap(FAMILY_LABEL[f] ?? family)} seen in ${region} ${dir} normal`;
+  }
   return `${a.detector} in ${region}`;
 }
 
@@ -56,6 +71,13 @@ export function alertNumbers(a: AlertRow): string {
   }
   if (a.detector === "D2") {
     return `${fmt(a.observed)} aircraft arrived in ${h}h vs ${fmt(a.expected)} in the baseline period`;
+  }
+  if (a.detector === "D6") {
+    const days = Math.round(h / 24);
+    return `${fmt(a.observed)} in ${days} days vs a typical ${fmt(a.expected)}`;
+  }
+  if (a.detector === "D7") {
+    return `${fmt(a.observed)} aircraft last seen there vs a typical ${fmt(a.expected)}`;
   }
   return `observed ${fmt(a.observed)} vs expected ${fmt(a.expected)}`;
 }

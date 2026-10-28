@@ -1,7 +1,7 @@
 """D1, D2 and the guards on synthetic inputs (SPEC §7-8). Detectors are pure: no I/O here."""
 
 from dataclasses import replace
-from datetime import date
+from datetime import date, timedelta
 
 from tw.config import load_yaml
 from tw.detectors.d1_volume_surge import detect_d1
@@ -100,6 +100,27 @@ def test_cooldown_only_blocks_repeats_at_same_or_lower_severity():
     later = [replace(a, alert_id="x")]
     (b,) = apply_cooldown(later, [a], CFG)
     assert b.status == "suppressed" and b.evidence["suppressed_by"] == ["cooldown"]
+
+
+def test_cooldown_keeps_families_apart():
+    (tanker,) = d1(14)
+    airlift = replace(
+        tanker, alert_id="y", evidence={**tanker.evidence, "family": "strategic_airlift"}
+    )
+    assert [a.status for a in apply_cooldown([airlift], [tanker], CFG)] == ["new"]
+    both = apply_cooldown([tanker, airlift], [], CFG)  # same batch too
+    assert [a.status for a in both] == ["new", "new"]
+    d2 = replace(tanker, detector="D2", evidence={"family": "tanker", "airfield": "ETAR"})
+    other_field = replace(d2, alert_id="z", evidence={"family": "tanker", "airfield": "LTAG"})
+    assert [a.status for a in apply_cooldown([other_field], [d2], CFG)] == ["suppressed"]
+
+
+def test_cooldown_hours_can_be_set_per_detector():
+    (a,) = d1(14)
+    later = replace(a, alert_id="x", created_at=a.created_at + timedelta(hours=40))
+    assert apply_cooldown([later], [a], CFG)[0].status == "new"  # default 12 h
+    cfg = {**CFG, "guards": {**CFG["guards"], "cooldown_hours_by_detector": {"D1": 72}}}
+    assert apply_cooldown([later], [a], cfg)[0].status == "suppressed"
 
 
 def test_deterministic():
