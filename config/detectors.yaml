@@ -71,6 +71,10 @@ theater:
   baseline_blocks: 8            # flow baseline: this many earlier non-overlapping windows
   min_blocks: 4                 # fewer complete blocks: "insufficient baseline", never an alert
 
+# Dashboard only (SPEC §10): how far back the trend charts reach. Not used by any detector.
+dashboard:
+  history_days: 180
+
 d6_flow_change:                 # 7-day entries, exits or transits from home per CCMD x family
   min_z: 3.0
   min_count: 5

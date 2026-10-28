@@ -217,6 +217,7 @@ select {
 }
 .seg {
   display: flex;
+  flex-shrink: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
@@ -524,6 +525,18 @@ tr.faint {
   }
   .legend {
     min-width: 120px;
+    bottom: 40px; /* clear of the expanded attribution */
+  }
+  .map-controls .hint {
+    display: none;
+  }
+  .map-controls {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    padding-bottom: 18px; /* the panel overlaps the map column by 10px */
+  }
+  .map-controls .hour {
+    flex: 1 1 100%;
   }
 }
 
@@ -589,4 +602,195 @@ tr.faint {
 .warn-text {
   color: var(--provisional);
   font-weight: 600;
+}
+
+/* ---- Overview (front page) ---------------------------------------------------------------- */
+.overview section + section {
+  margin-top: 20px;
+}
+.overview h2:first-child {
+  margin-top: 4px;
+}
+.standout {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.so {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.so:hover {
+  background: var(--accent-soft);
+}
+.so-title {
+  font-weight: 600;
+}
+.so-nums {
+  font-variant-numeric: tabular-nums;
+}
+.so-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.standout.held .so {
+  border-left-color: var(--line);
+  opacity: 0.8;
+}
+.calm {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--text-secondary);
+}
+.hero {
+  margin: 4px 0 8px;
+  color: var(--text-secondary);
+}
+.hero b {
+  font-size: 24px;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  margin-right: 2px;
+}
+.tbl.where td.hi {
+  color: var(--text-primary);
+  font-weight: 650;
+}
+.flag {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: 1px;
+}
+.trend {
+  position: relative;
+}
+.trend svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  touch-action: pan-y;
+}
+.trend .series {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.trend .typ {
+  stroke: var(--text-muted);
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+.trend .axis {
+  stroke: var(--line);
+  vector-effect: non-scaling-stroke;
+}
+.trend .cross {
+  stroke: var(--text-muted);
+  vector-effect: non-scaling-stroke;
+}
+.trend .dot {
+  fill: var(--accent);
+  stroke: var(--surface-1);
+  stroke-width: 2;
+}
+.trend .tick {
+  font-size: 9px;
+  fill: var(--text-muted);
+}
+.trend .tip {
+  position: absolute;
+  top: -6px;
+  transform: translateX(-50%);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+.minis {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 10px;
+}
+.mini {
+  display: block;
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px 2px;
+  cursor: pointer;
+}
+.mini.sel {
+  border-color: var(--accent);
+}
+.mini-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.mini-head b {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.mini .tick,
+.mini .tip {
+  display: none;
+}
+.about {
+  margin: 4px 0 8px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+.about summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.overview > .about {
+  margin-top: 20px;
+}
+.pos-legend {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.pt {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+.pt.fresh {
+  background: rgb(42 120 214);
+  box-shadow: 0 0 0 1px #fff;
+}
+.pt.old {
+  background: rgb(42 120 214 / 0.16);
+  border: 1.5px solid rgb(42 120 214 / 0.8);
 }

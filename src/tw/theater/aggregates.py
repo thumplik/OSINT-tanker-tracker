@@ -28,7 +28,7 @@ from tw.baselines.stats import mad, median
 from tw.provenance import code_version, effective_config_hash
 from tw.store.parquet import partition_dir, read_day, register_schema, write_partition
 from tw.theater.ccmd import CcmdMapper
-from tw.theater.flows import fixes, inventory, moves, transits
+from tw.theater.flows import fixes, inventory, moves, presence, transits
 
 AGG_INVENTORY = "aggregates/ccmd_inventory"
 AGG_MOVES = "aggregates/ccmd_moves"
@@ -131,8 +131,8 @@ def theater_day(
     cfg: Mapping[str, Any],
     home: str,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Pure: inventory at the end of `day`, moves on it, transits resolved on it, and transits
-    still en route at its end."""
+    """Pure: inventory at the end of `day`, moves on it, transits resolved on it, transits
+    still en route at its end, and the fix each counted aircraft is last seen at (`positions`)."""
     th = cfg["theater"]
     end = day_end(day)
     start = end - timedelta(days=1)
@@ -142,8 +142,10 @@ def theater_day(
         if f.ts < end
     ]
     trips = transits(fx, home, timedelta(hours=float(th["dwell_hours"])), end)
+    max_age = timedelta(days=float(th["max_age_days"]))
+    latest = sorted(presence(fx, end, max_age).values(), key=lambda f: (f.family, f.hex))
     return {
-        "inventory": inventory(fx, end, timedelta(days=float(th["max_age_days"]))),
+        "inventory": inventory(fx, end, max_age),
         "moves": [m.__dict__ for m in moves(fx, start, end)],
         "transits": [
             {**t.__dict__, "via": list(t.via)}
@@ -153,6 +155,7 @@ def theater_day(
         "en_route": [
             {**t.__dict__, "via": list(t.via)} for t in trips if t.resolution == "en_route"
         ],
+        "positions": [f.__dict__ for f in latest],
     }
 
 

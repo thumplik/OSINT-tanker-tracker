@@ -4,7 +4,7 @@ import { DEFAULT_STATE, parseState, serializeState, stepDate } from "./state";
 describe("URL state", () => {
   it("round-trips a full view", () => {
     const s = parseState(
-      "?date=2026-10-27&family=strategic_airlift&region=europe&ccmd=centcom&hour=14&tab=sorties",
+      "?date=2026-10-27&family=strategic_airlift&region=europe&ccmd=centcom&hour=14&tab=sorties&map=activity",
     );
     expect(s).toEqual({
       date: "2026-10-27",
@@ -14,6 +14,7 @@ describe("URL state", () => {
       res: 4,
       hour: 14,
       tab: "sorties",
+      layer: "activity",
     });
     expect(parseState(serializeState(s))).toEqual(s);
   });
@@ -23,8 +24,10 @@ describe("URL state", () => {
     expect(serializeState(DEFAULT_STATE)).toBe("");
   });
 
-  it("opens on tankers, never on mixed families", () => {
+  it("opens on the tanker overview and positions map, never on mixed families", () => {
     expect(DEFAULT_STATE.family).toBe("tanker");
+    expect(DEFAULT_STATE.tab).toBe("overview");
+    expect(DEFAULT_STATE.layer).toBe("positions");
     expect(parseState("?tab=theaters").tab).toBe("theaters");
   });
 

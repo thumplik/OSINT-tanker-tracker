@@ -165,6 +165,7 @@ web/             dashboard (React + MapLibre + deck.gl, on Vercel)
 | 🟡 | **M5** Dashboard with heat map, alert feed and date picker | Any day loads in < 1 s (built; deploy pending) |
 | ⬜ | **M5b** Playback, compare mode, retrospective re-runs | Point-in-time test passes |
 | 🟡 | **M5c** Families kept apart; CCMD flows, inventory, D6/D7, Theaters tab | Built; PR open |
+| 🟡 | **M5d** Overview front page: what stands out, latest positions, 180-day trends | Built; on the M5c PR |
 | ⬜ | **M6** D3–D5 and composite scoring | Backtest precision reviewed |
 | ⬜ | **M7** Publisher with approval queue | First approved post |
 | ⬜ | **M8** Truth set and threshold sweep | 20+ labeled periods |

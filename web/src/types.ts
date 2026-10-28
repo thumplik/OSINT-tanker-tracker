@@ -1,4 +1,4 @@
-// Shapes of the files written by `tw export` (src/tw/views/day.py). Schema version 2.
+// Shapes of the files written by `tw export` (src/tw/views/day.py). Schema version 3.
 
 export type Tier = "official" | "provisional";
 
@@ -66,7 +66,7 @@ export interface CoverageRow {
 
 export interface AlertRow {
   alert_id: string;
-  tier: Tier;
+  tier: Tier | "indicator"; // indicator: what the day's numbers flag; computed, never stored
   detector: string;
   region: string;
   window_start: string;
@@ -142,6 +142,19 @@ export interface TransitRow {
   dest_airfield: string | null;
 }
 
+export interface PositionRow {
+  hex: string;
+  type: string;
+  family: string;
+  callsign: string | null;
+  ts: string; // the aircraft's latest fix up to the end of the day
+  lat: number;
+  lon: number;
+  ccmd: string;
+  quality: "ground" | "aloft" | "last_seen";
+  airfield: string | null;
+}
+
 export interface Theaters {
   home: string;
   baseline_as_of: string | null;
@@ -152,10 +165,16 @@ export interface Theaters {
   min_blocks: number;
   rows: TheaterRow[];
   history: Record<string, (number | null)[]>; // "ccmd|family" -> daily inventory, oldest first
-  coverage: { ccmd: string; aircraft_hours: number; median: number | null; ratio: number | null }[];
+  coverage: {
+    ccmd: string;
+    aircraft_hours: number;
+    median: number | null;
+    ratio: number | null;
+  }[];
   moves: MoveRow[];
   transits: TransitRow[]; // resolved within the window
   en_route: TransitRow[];
+  positions?: PositionRow[]; // schema 3+: one per aircraft counted in `rows` inventory
 }
 
 export interface DayView {
@@ -181,6 +200,7 @@ export interface DayView {
   alerts: AlertRow[];
   sorties: SortieRow[];
   theaters?: Theaters; // schema 2+
+  indicators?: AlertRow[]; // schema 3+
 }
 
 export interface DayR6 extends Heat {

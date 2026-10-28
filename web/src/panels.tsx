@@ -115,11 +115,14 @@ export function AlertsPanel({
 
   return (
     <div className="alerts">
-      <p className="explain">
-        Alerts compare a day with the same weekday over the previous{" "}
-        {view.meta.baseline_window_days} days. Unusual counts are worth watching; they say nothing
-        about purpose.
-      </p>
+      <details className="about">
+        <summary>How to read this</summary>
+        <p>
+          Alerts compare a day with the same weekday over the previous{" "}
+          {view.meta.baseline_window_days} days. Unusual counts are worth watching; they say nothing
+          about purpose.
+        </p>
+      </details>
       <h2>Official</h2>
       {visible(official).map((a) => (
         <AlertCard key={a.alert_id} a={a} meta={meta} sorties={sorties} />
@@ -177,11 +180,15 @@ export function RegionsPanel({
   const { coverage_min_ratio: lo, coverage_max_ratio: hi } = view.meta;
   return (
     <div className="regions">
-      <p className="explain">
-        Sorties of {view.meta.min_sortie_minutes}+ minutes touching each region, against the median for this weekday
-        {view.meta.baseline_as_of ? ` (baseline as of ${view.meta.baseline_as_of})` : ""}. Receiver
-        coverage is all aircraft seen, vs usual; far off usual makes counts unreliable.
-      </p>
+      <details className="about">
+        <summary>How to read this</summary>
+        <p>
+          Sorties of {view.meta.min_sortie_minutes}+ minutes touching each region, against the
+          median for this weekday
+          {view.meta.baseline_as_of ? ` (baseline as of ${view.meta.baseline_as_of})` : ""}.
+          Receiver coverage is all aircraft seen, vs usual; far off usual makes counts unreliable.
+        </p>
+      </details>
       {fams.map((f) => (
         <table key={f} className="tbl">
           <caption>{familyLabel(f)}</caption>
@@ -281,7 +288,8 @@ export function SortiesPanel({
         )}
       </div>
       <p className="muted small">
-        {rows.length} sorties{rows.length > MAX_ROWS && `, first ${MAX_ROWS} shown`}. Sorties under{" "}
+        {rows.length} sorties
+        {rows.length > MAX_ROWS && `, first ${MAX_ROWS} shown`}. Sorties under{" "}
         {view.meta.min_sortie_minutes} min are listed but not counted.
       </p>
       <table className="tbl">
@@ -328,7 +336,9 @@ function Spark({ values, median }: { values: (number | null)[]; median: number |
   });
   return (
     <svg className="spark" width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
-      {median !== null && <line x1={0} x2={w} y1={y(median)} y2={y(median)} className="spark-typ" />}
+      {median !== null && (
+        <line x1={0} x2={w} y1={y(median)} y2={y(median)} className="spark-typ" />
+      )}
       <path d={d} className="spark-line" />
     </svg>
   );
@@ -377,14 +387,19 @@ export function TheatersPanel({
   const moves = mine(th.moves);
   return (
     <div className="theaters">
-      <p className="explain">
-        Aircraft by combatant command, from where flights start and end (boundaries approximate).
-        "Seen in" counts aircraft whose latest position in the last {th.max_age_days} days was there;
-        aircraft not broadcasting aren't counted, so these are floors. Flows are the last{" "}
-        {th.window_days} days, shown as observed / typical.
-      </p>
+      <details className="about">
+        <summary>How to read this</summary>
+        <p>
+          Aircraft by combatant command, from where flights start and end (boundaries approximate).
+          "Seen in" counts aircraft whose latest position in the last {th.max_age_days} days was
+          there; aircraft not broadcasting aren't counted, so these are floors. Flows are the last{" "}
+          {th.window_days} days, shown as observed / typical.
+        </p>
+      </details>
       {!th.window_complete && (
-        <p className="muted small">A day of the {th.window_days}-day window has no data: flows not shown.</p>
+        <p className="muted small">
+          A day of the {th.window_days}-day window has no data: flows not shown.
+        </p>
       )}
       {ccmds.map((c) => {
         const cv = cov.get(c);
@@ -400,7 +415,8 @@ export function TheatersPanel({
               {c === th.home && <span className="muted small">home</span>}
               {cv?.ratio != null && (
                 <span className={`small ${off ? "warn-text" : "muted"}`}>
-                  coverage {Math.round(cv.ratio * 100)}% of usual{off ? ": counts unreliable" : ""}
+                  coverage {Math.round(cv.ratio * 100)}% of usual
+                  {off ? ": counts unreliable" : ""}
                 </span>
               )}
             </header>
@@ -471,10 +487,15 @@ export function TheatersPanel({
         <ul className="ids">
           {moves.map((m) => (
             <li key={`${m.hex}-${m.ts}`}>
-              {hhmm(m.ts)} <b>{m.hex}</b> {TYPE_LABEL[m.type] ?? m.type} {name(m.src)} → {name(m.dst)}
+              {hhmm(m.ts)} <b>{m.hex}</b> {TYPE_LABEL[m.type] ?? m.type} {name(m.src)} →{" "}
+              {name(m.dst)}
               {m.dst_airfield && ` (${m.dst_airfield})`}{" "}
               <span className="muted">
-                {m.quality === "ground" ? "landed" : m.quality === "aloft" ? "lost from view" : "airborne"}
+                {m.quality === "ground"
+                  ? "landed"
+                  : m.quality === "aloft"
+                    ? "lost from view"
+                    : "airborne"}
               </span>
             </li>
           ))}

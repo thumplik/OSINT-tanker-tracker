@@ -1,6 +1,7 @@
 // View state lives in the URL so every view is a shareable link (SPEC §11).
 
-export type Tab = "alerts" | "regions" | "theaters" | "sorties";
+export type Tab = "overview" | "alerts" | "theaters" | "sorties" | "regions";
+export type Layer = "positions" | "activity";
 
 export interface ViewState {
   date: string | null; // null: latest
@@ -10,6 +11,7 @@ export interface ViewState {
   res: 4 | 6;
   hour: number | null; // null: whole day
   tab: Tab;
+  layer: Layer; // map: latest positions, or the day's activity heat map
 }
 
 export const DEFAULT_STATE: ViewState = {
@@ -19,11 +21,12 @@ export const DEFAULT_STATE: ViewState = {
   ccmd: null,
   res: 4,
   hour: null,
-  tab: "alerts",
+  tab: "overview",
+  layer: "positions",
 };
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-export const TABS: Tab[] = ["alerts", "regions", "theaters", "sorties"];
+export const TABS: Tab[] = ["overview", "alerts", "theaters", "sorties", "regions"];
 
 export function parseState(search: string): ViewState {
   const q = new URLSearchParams(search);
@@ -39,6 +42,7 @@ export function parseState(search: string): ViewState {
     res: q.get("res") === "6" ? 6 : 4,
     hour: h !== null && h >= 0 && h <= 23 ? h : null,
     tab: tab && TABS.includes(tab) ? tab : DEFAULT_STATE.tab,
+    layer: q.get("map") === "activity" ? "activity" : "positions",
   };
 }
 
@@ -51,6 +55,7 @@ export function serializeState(s: ViewState): string {
   if (s.res !== DEFAULT_STATE.res) q.set("res", String(s.res));
   if (s.hour !== null && s.res === 4) q.set("hour", String(s.hour));
   if (s.tab !== DEFAULT_STATE.tab) q.set("tab", s.tab);
+  if (s.layer !== DEFAULT_STATE.layer) q.set("map", s.layer);
   const out = q.toString();
   return out ? `?${out}` : "";
 }

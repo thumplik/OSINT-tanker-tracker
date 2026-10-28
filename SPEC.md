@@ -229,6 +229,11 @@ Alerts in the same region within 24h merge into one event. Severity: `low` (one 
 
 ## 10. Dashboard views
 
+0. **Overview** (M5d, the front page): one family, one day, three questions in order.
+   - *What stands out*: the day's stored official alerts once the official run exists for it; before that (history, or today's live data) the **indicators**: D1, D6 and D7 plus the coverage guard run on that day's inputs for the page (`views/indicators.py`), labeled as such, never stored or posted. Guard-suppressed items are listed separately as "held back", with the coverage ratio. D2 isn't re-run.
+   - *Where they are*: the map shows each aircraft at its latest fix (`theaters.positions`, the fixes the inventory counts; solid if within 24 h). A table gives aircraft last seen per CCMD vs typical.
+   - *Over time*: the family's total seen and each CCMD's, daily over `dashboard.history_days` (180), with the typical line; clicking a CCMD selects it everywhere.
+   The heat map is the map's "Activity" mode; region boxes show only on the Regions and Flights tabs.
 1. **Heat map**: H3 hexes by family and time range, with a baseline-difference toggle (observed minus expected).
 2. **Alert feed**: cards with evidence, sortie list and approve/reject.
 3. **Airfield board**: arrivals and departures by family, sparklines vs baseline.
@@ -249,7 +254,7 @@ Pick any past date (or date range) and see the system exactly as it would have l
 - **Playback**: a time scrubber replays that day's tracks (1×, 10×, 60×, 600×), with sorties appearing and disappearing on the map.
 - **Then vs. normal**: every count shows the baseline *as it stood on that date*, so "unusual for then" is judged honestly.
 - **Compare**: pick two dates (or a date vs. its baseline) for side-by-side or difference heat maps.
-- **Alert re-run**: "What would have fired?" runs the current detectors over the past day without saving or posting anything. Results are labeled as retrospective.
+- **Alert re-run**: "What would have fired?" runs the current detectors over the past day without saving or posting anything. Results are labeled as retrospective. (M5d: the Overview's indicators do this for D1, D6 and D7 at export time.)
 - **Shareable links**: every view encodes its state in the URL (`?date=2026-06-14&t=1430Z&family=tanker&region=med`).
 
 ### Point-in-time correctness (non-negotiable)
@@ -325,6 +330,7 @@ Rules for every ML stage:
 | M5 | Dashboard (heat map, alert feed) with date picker | Usable on desktop and phone; any backfilled day loads in < 1 s. Heat-map baseline difference, airfield board and coverage map move to M5b (they need a per-hex baseline) |
 | M5b | Playback, compare mode, retrospective alert re-run | Scrub a full day smoothly; point-in-time test passes |
 | M5c | Families kept apart; theater layer (CCMD inventory, entries/exits, transits from home), D6/D7, Theaters tab | Backtest reviewed; point-in-time tests pass |
+| M5d | Overview front page: what stands out (alerts or indicators), latest positions, 180-day trends | An analyst can answer "anything unusual, where are they, vs normal" without leaving the first screen, on desktop and phone |
 | M6 | D3–D5, composite scoring | Backtest precision reviewed |
 | M7 | Publisher with approval queue | First approved post goes out |
 | M8 | Truth set + threshold sweep report | 20+ labeled periods; thresholds chosen from the sweep |

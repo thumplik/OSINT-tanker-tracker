@@ -164,13 +164,13 @@ def test_site_meta_lists_regions_families_and_attribution(tmp_path):
     assert any("ODbL" in a for a in meta["attribution"])
 
 
-def theater_history(root: Path) -> None:
+def theater_history(root: Path, tankers: int = 9) -> None:
     """history() with D's theater aggregates and snapshot, plus two C-17s from Dover into Al
     Udeid on D (another family than the Europe tankers)."""
     history(root)
     for day in days_between(D - timedelta(days=56), D - timedelta(days=1)):
         assert Context(root).build_theater(day)
-    rows = [sortie(D, i, dest="ETAR") for i in range(9)] + [
+    rows = [sortie(D, i, dest="ETAR") for i in range(tankers)] + [
         {
             **sortie(D, 50 + i, dest="OTBH", end=(25.12, 51.32), hex_code=f"ae0c1{i}"),
             "type": "C17",
@@ -201,7 +201,12 @@ def test_theaters_keep_families_apart_and_judge_against_the_snapshot(tmp_path):
     assert airlift["entries"]["observed"] == 2  # one exit from NORTHCOM, one entry, per flight
     assert rows[("northcom", "strategic_airlift")]["exits"]["observed"] == 2
     assert [(m["src"], m["dst"]) for m in th["moves"]] == [("northcom", "centcom")] * 2
-    assert len(th["history"]["eucom|tanker"]) == 56 and th["history"]["eucom|tanker"][-1] == 9
+    assert len(th["history"]["eucom|tanker"]) == 180 and th["history"]["eucom|tanker"][-1] == 9
+    assert th["history"]["eucom|tanker"][0] is None  # before the data: missing, never zero
+    spots = {(p["ccmd"], p["family"]): p for p in th["positions"]}
+    assert (
+        len(th["positions"]) == 11 and spots[("centcom", "strategic_airlift")]["airfield"] == "OTBH"
+    )
     assert th["window_complete"] and th["baseline_as_of"] == D.isoformat()
 
 
@@ -214,3 +219,19 @@ def test_theaters_ignore_later_data(tmp_path):
     )
     assert Context(tmp_path).build_theater(later)
     assert day_view(ViewContext(tmp_path), D, NOW)["theaters"] == before
+
+
+def test_indicators_run_the_detectors_without_storing_anything(tmp_path):
+    theater_history(tmp_path, tankers=14)
+    from tw.pipeline import prepare_theater
+    from tw.store.alerts import OFFICIAL, read_alerts
+
+    assert prepare_theater(D, Context(tmp_path)) is not None  # builds the snapshot
+    view = day_view(ViewContext(tmp_path), D, NOW)
+    d7 = [a for a in view["indicators"] if a["detector"] == "D7"]
+    assert [(a["region"], a["evidence"]["family"], a["observed"]) for a in d7] == [
+        ("eucom", "tanker", 14)
+    ]
+    assert all(a["tier"] == "indicator" for a in view["indicators"])
+    assert view["alerts"] == [] and read_alerts(tmp_path, OFFICIAL, [D]) == []
+    assert day_view(ViewContext(tmp_path), D, NOW)["indicators"] == view["indicators"]

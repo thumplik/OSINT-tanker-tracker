@@ -1,6 +1,6 @@
 # Handoff
 
-_Last updated: 2026-10-28_
+_Last updated: 2026-10-28 (M5d)_
 
 ## Branches (stacked; nothing merged yet)
 - `m4-live-worker` (PR #2) → `m5-dashboard` (PR #3) → `m5c-theaters` (this work), all in the
@@ -12,27 +12,23 @@ _Last updated: 2026-10-28_
   branch is `m5-dashboard` for now; set it back to `main` after the merges.
 - Blob store `tanker-watch-data` = `VITE_DATA_BASE_URL`; RW token in the main checkout's `.env`.
 
-## M5c (owner request 2026-10-28; plan approved)
-- **Families kept apart.**
-  - The cooldown is keyed by detector + region + family (+ D6 series). The old key let one family
-    silence another in 46% of cooldown suppressions.
-  - D2 over 6 months: 346 → 452 live alerts. Keying by airfield as well would have given 647,
-    so it was left out.
-  - The web app opens on tankers; alerts filter by family and show a family chip.
-- **Theater layer** (`src/tw/theater/`, `config/ccmds.yaml`, SPEC §5-8):
-  - fixes come from sortie starts and ends, not overflights;
-  - inventory ("seen in", 14 days), moves (entries/exits), transits from NORTHCOM (destination =
-    farthest fix, 48 h dwell);
-  - aggregates + write-once `baselines/ccmd`.
-- **D6/D7:** D6 is a 7-day flow surge; D7 an inventory shift, up or down. All CCMDs are
-  `watch`; official tier only.
-- **Theaters tab:** per-CCMD cards, sparklines, transit arcs, CCMD cells on the map.
-- **Full-year backtest:** `reports/backtest_2026-10-26.md` (gitignored), on a scratch copy at
-  `/Volumes/Code/tanker-hunt-m5c-data` (points and live symlinked) so the trial's data dir isn't
-  touched.
-  - D6 4.8/wk, D7 1.1/wk; CENTCOM tankers fire on 2026-02-26 (D6 6 in vs 0; D7 6 vs 0).
-- Blob was re-exported from the scratch copy (theaters in every day file). The public site shows
-  them only once this branch reaches the production branch.
+## M5c (theaters; plan approved 2026-10-28)
+- Families kept apart: cooldown keyed by detector + region + family (+ D6 series); D2 over 6
+  months 346 → 452 live alerts (airfield in the key would give 647, so left out).
+- Theater layer (`src/tw/theater/`, `config/ccmds.yaml`, SPEC §5-8): fixes from sortie
+  starts/ends; inventory ("seen in", 14 d), entries/exits, transits from NORTHCOM; write-once
+  `baselines/ccmd`. D6 flow surge, D7 inventory shift; all CCMDs `watch`; official tier only.
+- Full-year backtest `reports/backtest_2026-10-26.md` on the scratch copy
+  `/Volumes/Code/tanker-hunt-m5c-data`: D6 4.8/wk, D7 1.1/wk; CENTCOM tankers fire 2026-02-26.
+
+## M5d (owner request 2026-10-28: "too much data at first glance")
+- New default tab **Overview**: what stands out → where they are → over time, one family.
+  - Stored official alerts once the run exists for a day; otherwise **indicators** (D1/D6/D7 +
+    coverage guard run at export by `views/indicators.py`, never stored). Suppressed = "held back".
+  - Map defaults to each aircraft's latest fix (`theaters.positions`, with callsign); heat map is
+    the "Activity" mode. Region boxes only on Regions/Flights. Family is a 3-button switch.
+  - Trends: `dashboard.history_days: 180` (detectors.yaml, dashboard only). Schema 3.
+- Local export re-done (scratch data); Blob and the live site are still schema 2 until published.
 
 ## Open question (owner)
 - **The coverage guard hides the CENTCOM build-up.**

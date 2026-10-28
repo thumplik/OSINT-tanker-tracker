@@ -2,6 +2,8 @@
 
 from datetime import UTC, datetime, timedelta
 
+from tw.config import load_yaml
+from tw.theater.aggregates import theater_day
 from tw.theater.ccmd import CcmdMapper, load_ccmds
 from tw.theater.flows import fixes, inventory, moves, presence, transits
 
@@ -130,3 +132,21 @@ def test_point_in_time_later_sorties_change_nothing_earlier():
 def test_deterministic_regardless_of_input_order():
     rows = [sortie("a", 0, 8, "KDOV", "ETAR"), sortie("a", 28, 6, "ETAR", "OTBH")]
     assert fx(*rows) == fx(*reversed(rows))
+
+
+def test_positions_are_each_aircrafts_latest_fix_up_to_the_day():
+    rows = [
+        sortie("a", 0, 8, "KDOV", "ETAR"),
+        sortie("a", 30, 6, "ETAR", "OTBH"),  # day 2: a is in CENTCOM from then on
+        sortie("k", 0, 8, "KDOV", "ETAR", family="tanker", type_="K35R"),
+    ]
+    cfg = load_yaml("detectors.yaml")
+    day1 = theater_day(rows, T0.date(), MAPPER, cfg, "northcom")["positions"]
+    assert [(p["hex"], p["ccmd"], p["airfield"]) for p in day1] == [
+        ("a", "eucom", "ETAR"),
+        ("k", "eucom", "ETAR"),
+    ]
+    day2 = theater_day(rows, (T0 + timedelta(days=1)).date(), MAPPER, cfg, "northcom")
+    assert {p["hex"]: p["ccmd"] for p in day2["positions"]} == {"a": "centcom", "k": "eucom"}
+    totals = {(r["ccmd"], r["family"]): r["aircraft"] for r in day2["inventory"]}
+    assert len(day2["positions"]) == sum(totals.values())  # one position per counted aircraft

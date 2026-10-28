@@ -35,7 +35,8 @@ from tw.baselines.aggregates import (
 from tw.baselines.build import BL_COVERAGE, BL_REGION_FAMILY, AggregateCache, latest_snapshot
 from tw.baselines.stats import robust_z_from
 from tw.config import Fleet, Regions, load_fleet, load_regions, load_yaml
-from tw.detectors.types import Alert
+from tw.detectors.types import Alert, FlowCount, InventoryCount, KeyBaseline, RegionCount, Window
+from tw.pipeline import TheaterInputs
 from tw.provenance import code_version, effective_config_hash
 from tw.store.alerts import OFFICIAL, PROVISIONAL, read_alerts
 from tw.store.parquet import partition_dir, read_day
@@ -47,16 +48,18 @@ from tw.theater.aggregates import (
     BL_CCMD,
     SERIES,
     daily_counts,
+    day_end,
     inventory_totals,
     latest_theater_snapshot,
     lookback_sorties,
     theater_day,
 )
 from tw.theater.ccmd import CcmdMapper, Ccmds, load_ccmds
+from tw.views.indicators import day_indicators
 
 Tier = Literal["official", "provisional"]
 ALL = "all"  # pseudo-family: any tracked type, each aircraft once
-SCHEMA_VERSION = 2  # 2: theaters (M5c)
+SCHEMA_VERSION = 3  # 2: theaters (M5c); 3: positions, 180-day history (M5d)
 
 
 @dataclass
@@ -146,14 +149,21 @@ def _heat(ctx: ViewContext, points_dir: Path, cell_col: str, hourly: bool) -> di
     return {"families": families, "cells": cells, "rows": out}
 
 
-def _region_rows(
-    ctx: ViewContext, day: date, tier: Tier, sorties: list[dict[str, Any]], as_of: date | None
+def _region_counts(
+    ctx: ViewContext, day: date, tier: Tier, sorties: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]]
     if tier == "official" and partition_dir(ctx.data_dir, AGG_REGION_FAMILY, day).exists():
-        counts = read_day(ctx.data_dir, AGG_REGION_FAMILY, day).to_pylist()
+        rows = read_day(ctx.data_dir, AGG_REGION_FAMILY, day).to_pylist()
     else:  # live day, or an official day the pipeline hasn't aggregated: count the same way
         minutes = float(ctx.cfg["counting"]["min_sortie_minutes"])
-        counts = count_sorties(sorties, ctx.fleet, ctx.mapper, minutes)[0]
+        rows = count_sorties(sorties, ctx.fleet, ctx.mapper, minutes)[0]
+    return rows
+
+
+def _region_rows(
+    ctx: ViewContext, day: date, counts: list[dict[str, Any]], as_of: date | None
+) -> list[dict[str, Any]]:
     baseline = _baseline(ctx, BL_REGION_FAMILY, as_of, day, ("region", "family"))
     bl_cfg = ctx.cfg["baseline"]
     min_samples = _min_samples(ctx)
@@ -247,6 +257,39 @@ def _alerts(ctx: ViewContext, day: date) -> list[dict[str, Any]]:
     return out
 
 
+def _indicators(
+    ctx: ViewContext,
+    day: date,
+    tier: Tier,
+    counts: list[dict[str, Any]],
+    as_of: date | None,
+    theater: TheaterInputs | None,
+) -> list[Alert]:
+    """What the day's numbers would flag (`views/indicators.py`); never stored."""
+    rcounts = [
+        RegionCount(r["region"], r["family"], r["sorties"], tuple(r["sortie_ids"])) for r in counts
+    ]
+    baseline = {
+        k: KeyBaseline(r["median"], r["mad"], r["n_days"])
+        for k, r in _baseline(ctx, BL_REGION_FAMILY, as_of, day, ("region", "family")).items()
+    }
+    cov_bl = {
+        k: KeyBaseline(r["median"], r["mad"], r["n_days"])
+        for k, r in _baseline(ctx, BL_COVERAGE, as_of, day, ("region",)).items()
+    }
+    coverage = (
+        {
+            r["region"]: float(r["aircraft_hours"])
+            for r in read_day(ctx.data_dir, AGG_COVERAGE, day).to_pylist()
+        }
+        if tier == "official"
+        else {}
+    )
+    return day_indicators(
+        day, tier != "official", rcounts, baseline, coverage, cov_bl, theater, ctx.cfg
+    )
+
+
 def _sortie(s: Mapping[str, Any], ctx: ViewContext, min_minutes: float) -> dict[str, Any]:
     minutes = (s["end_ts"] - s["start_ts"]).total_seconds() / 60
     return {
@@ -272,11 +315,14 @@ def _ts_rows(rows: list[dict[str, Any]], keys: tuple[str, ...]) -> list[dict[str
     return [{**r, **{k: _iso(r[k]) for k in keys}} for r in rows]
 
 
-def _theaters(ctx: ViewContext, day: date, tier: Tier) -> dict[str, Any]:
-    """CCMD inventory, entries/exits and transits from home (M5c). Official days read the
-    stored theater aggregates; a live day computes its own the same way (`theater_day`) over
-    official sorties where they exist and live ones after. Earlier days of the flow window always
-    come from aggregates. Families are never summed together."""
+def _theaters(
+    ctx: ViewContext, day: date, tier: Tier
+) -> tuple[dict[str, Any], TheaterInputs | None]:
+    """CCMD inventory, entries/exits and transits from home (M5c), and the D6/D7 inputs for the
+    window ending with `day` (None without a snapshot). Official days read the stored theater
+    aggregates; a live day computes its own the same way (`theater_day`) over official sorties
+    where they exist and live ones after. Earlier days of the flow window always come from
+    aggregates. Families are never summed together."""
     th = ctx.cfg["theater"]
     flow_days = int(th["flow_window_days"])
     families = ctx.families
@@ -287,12 +333,29 @@ def _theaters(ctx: ViewContext, day: date, tier: Tier) -> dict[str, Any]:
             "transits": ctx.cache.get(AGG_TRANSITS, day) or [],
         }
         sorties = lookback_sorties([ctx.data_dir], day, int(th["lookback_days"]))
-        en_route = theater_day(sorties, day, ctx.ccmd_mapper, ctx.cfg, ctx.ccmds.home)["en_route"]
+        computed = theater_day(sorties, day, ctx.ccmd_mapper, ctx.cfg, ctx.ccmds.home)
         built = ctx.cache.get(AGG_INVENTORY, day) is not None
     else:
         sorties = lookback_sorties([ctx.data_dir, ctx.live_dir], day, int(th["lookback_days"]))
-        live = theater_day(sorties, day, ctx.ccmd_mapper, ctx.cfg, ctx.ccmds.home)
-        today, en_route, built = live, live["en_route"], True
+        computed = theater_day(sorties, day, ctx.ccmd_mapper, ctx.cfg, ctx.ccmds.home)
+        today, built = computed, True
+    en_route = computed["en_route"]
+    callsigns = {s["sortie_id"]: (s["callsign"] or "").strip() or None for s in sorties}
+    positions = [
+        {
+            "hex": f["hex"],
+            "type": f["type"],
+            "family": f["family"],
+            "callsign": callsigns.get(f["sortie_id"]),
+            "ts": _iso(f["ts"]),
+            "lat": round(f["lat"], 2),
+            "lon": round(f["lon"], 2),
+            "ccmd": f["ccmd"],
+            "quality": f["quality"],
+            "airfield": f["airfield"],
+        }
+        for f in computed["positions"]
+    ]
 
     # Flow sums over the window: today from `today`, earlier days from aggregates.
     sums: dict[tuple[str, str, str], int] = defaultdict(int)
@@ -316,9 +379,11 @@ def _theaters(ctx: ViewContext, day: date, tier: Tier) -> dict[str, Any]:
     as_of = latest_theater_snapshot(ctx.data_dir, day)
     bl: dict[tuple[str, str, str], dict[str, Any]] = {}
     cov_bl: dict[str, dict[str, Any]] = {}
+    cov_bl_all: dict[tuple[str, int], KeyBaseline] = {}
     if as_of is not None:
         for r in read_day(ctx.data_dir, BL_CCMD, as_of).to_pylist():
             if r["series"] == "coverage":
+                cov_bl_all[(r["ccmd"], r["weekday"])] = KeyBaseline(r["median"], r["mad"], r["n"])
                 if r["weekday"] == day.weekday():
                     cov_bl[r["ccmd"]] = r
             else:
@@ -357,7 +422,7 @@ def _theaters(ctx: ViewContext, day: date, tier: Tier) -> dict[str, Any]:
             rows.append(row)
 
     history: dict[str, list[int | None]] = {}
-    span = int(ctx.cfg["baseline"]["window_days"])
+    span = int(ctx.cfg["dashboard"]["history_days"])
     for back in range(span - 1, -1, -1):
         d = day - timedelta(days=back)
         inv = today["inventory"] if back == 0 else ctx.cache.get(AGG_INVENTORY, d)
@@ -379,6 +444,35 @@ def _theaters(ctx: ViewContext, day: date, tier: Tier) -> dict[str, Any]:
                 "ratio": round(r["aircraft_hours"] / med, 3) if med else None,
             }
         )
+    inputs = None
+    if as_of is not None:
+        end = day_end(day)
+        window = Window(end - timedelta(days=flow_days), end)
+        kb = {k: KeyBaseline(r["median"], r["mad"], r["n"]) for k, r in bl.items()}
+        inputs = TheaterInputs(
+            window=window,
+            flows=[
+                FlowCount(c, f, s, sums.get((c, f, s), 0))
+                for c in ctx.ccmds.ids
+                for f in families
+                for s in SERIES
+            ]
+            if complete
+            else [],
+            inventory=[
+                InventoryCount(c, f, totals.get((c, f), 0)) for c in ctx.ccmds.ids for f in families
+            ],
+            flow_baseline={k: b for k, b in kb.items() if k[2] != "inventory"},
+            inventory_baseline={(c, f): b for (c, f, s), b in kb.items() if s == "inventory"},
+            coverage_by_day={
+                d: {
+                    r["ccmd"]: float(r["aircraft_hours"])
+                    for r in ctx.cache.get(AGG_CCMD_COVERAGE, d) or []
+                }
+                for d in window.days
+            },
+            coverage_baseline_all=cov_bl_all,
+        )
     return {
         "home": ctx.ccmds.home,
         "baseline_as_of": as_of.isoformat() if as_of else None,
@@ -396,7 +490,8 @@ def _theaters(ctx: ViewContext, day: date, tier: Tier) -> dict[str, Any]:
             ("depart_ts", "arrive_ts", "resolved_ts"),
         ),
         "en_route": _ts_rows(en_route, ("depart_ts", "arrive_ts", "resolved_ts")),
-    }
+        "positions": positions,
+    }, inputs
 
 
 def day_view(ctx: ViewContext, day: date, now: datetime) -> dict[str, Any] | None:
@@ -410,6 +505,9 @@ def day_view(ctx: ViewContext, day: date, now: datetime) -> dict[str, Any] | Non
     as_of = latest_snapshot(ctx.data_dir, day)
     min_minutes = float(ctx.cfg["counting"]["min_sortie_minutes"])
     guards = ctx.cfg["guards"]
+    counts = _region_counts(ctx, day, tier, sorties)
+    theaters, theater_inputs = _theaters(ctx, day, tier)
+    flagged = _indicators(ctx, day, tier, counts, as_of, theater_inputs)
     return {
         "meta": {
             "schema": SCHEMA_VERSION,
@@ -428,11 +526,12 @@ def day_view(ctx: ViewContext, day: date, now: datetime) -> dict[str, Any] | Non
             "code_version": code_version(),
         },
         "heat": _heat(ctx, partition_dir(root, "points", day), "h3_r4", hourly=True),
-        "regions": _region_rows(ctx, day, tier, sorties, as_of),
+        "regions": _region_rows(ctx, day, counts, as_of),
         "coverage": _coverage_rows(ctx, day, tier, as_of),
         "alerts": _alerts(ctx, day),
         "sorties": [_sortie(s, ctx, min_minutes) for s in sorties],
-        "theaters": _theaters(ctx, day, tier),
+        "theaters": theaters,
+        "indicators": [_alert(a, "indicator") for a in flagged],  # type: ignore[arg-type]
     }
 
 
