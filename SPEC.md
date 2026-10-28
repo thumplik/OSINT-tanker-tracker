@@ -96,8 +96,8 @@ providers ──▶ ingest worker ──▶ raw store (JSONL.gz)
 
 - **Frontend + read API: Vercel** (Tom's account).
 - **Ingest/detection worker: not on Vercel.** It polls every few seconds around the clock and needs a disk, which serverless functions don't provide. Run it on a small always-on box: a cheap VPS, or a home Raspberry Pi (which can double as a feeder later).
-- **Hand-off between them**: the worker publishes per-day aggregates, sorties and alerts to shared storage that Vercel reads: Postgres (e.g. Neon) for alerts and the approval queue, and object storage (e.g. Vercel Blob) for daily Parquet/aggregate files. Raw points stay on the worker.
-- Approve/reject writes go to Postgres; the worker picks up approved alerts and posts them. The X credentials live only on the worker.
+- **Hand-off between them (M5, decided Oct 2026)**: the worker exports each day as static JSON (`tw export`, `src/tw/views/day.py`) to a public Vercel Blob store, and the site is a static React app that reads those files. There is no server-side API or database until approvals need one. Files: `days/<D>.json` (heat r4 x hour x family, region counts vs the baseline snapshot, coverage, official + provisional alerts, sortie summaries), `days/<D>.r6.json` (whole-day r6 heat, loaded on demand), `index.json` (days, tier, alert counts), `meta.json` (regions, families, attribution). The worker re-exports today and yesterday hourly, and each day the official run loads. Raw points stay on the worker. The dashboard is public (owner decision, Oct 2026): provisional alerts are shown labeled "coverage not checked".
+- From M7: approve/reject writes go to Postgres; the worker picks up approved alerts and posts them. The X credentials live only on the worker.
 
 ### Worker (M4)
 
@@ -246,7 +246,7 @@ Pick any past date (or date range) and see the system exactly as it would have l
 
 - Points and sorties are partitioned by UTC date (`points/date=YYYY-MM-DD/*.parquet`) so loading a day reads one partition.
 - Pre-compute per-day H3 aggregates (r4 and r6, hourly) when a day closes, so day views render in under a second.
-- Every API endpoint takes `date` / `from` / `to` / `as_of`. "Live" is just `date=today`; there is one code path, not two.
+- Every view is a function of a date (`day_view(day)`), exported as one file per day. "Live" is just `date=today` (tier `provisional`, from live data); there is one code path, not two. A day's view reads only that day's and earlier partitions, and the newest baseline snapshot dated on or before it.
 - Playback endpoint returns a compact per-minute track stream for the selected day and filters.
 
 ## 12. Testing and evaluation
@@ -303,7 +303,7 @@ Rules for every ML stage:
 | M2 | Track segmenter + airfield resolution | ≥ 90% of origins and destinations seen low (on the ground or < 5,000 ft AGL) resolve to an airfield. Ends first/last seen at altitude are coverage edges and are reported, not counted (decided Oct 2026) |
 | M3 | Baselines + D1, D2 + coverage guard | Backtest report generated |
 | M4 | Live ingest worker | Runs 72h unattended; rate limits respected (both read off `tw worker-report`, from the worker's request log) |
-| M5 | Dashboard (heat map, alert feed) with date picker | Usable on desktop and phone; any backfilled day loads in < 1 s |
+| M5 | Dashboard (heat map, alert feed) with date picker | Usable on desktop and phone; any backfilled day loads in < 1 s. Heat-map baseline difference, airfield board and coverage map move to M5b (they need a per-hex baseline) |
 | M5b | Playback, compare mode, retrospective alert re-run | Scrub a full day smoothly; point-in-time test passes |
 | M6 | D3–D5, composite scoring | Backtest precision reviewed |
 | M7 | Publisher with approval queue | First approved post goes out |

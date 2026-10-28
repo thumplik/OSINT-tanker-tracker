@@ -41,8 +41,17 @@ _Last updated: 2026-10-28_
   - Attribution footer. No approve/reject (M7).
 - Deferred to M5b: per-hex baseline diff toggle, airfield board, playback, compare, re-run.
 
+## M5 status
+- Built and checked locally (browser pane, desktop + phone): views + export (14 tests), web app
+  (8 vitest), CI web job. Real day: ~0.15 s to build, ~355 KB JSON + 1.4 MB r6 file.
+- Local loop: `uv run tw export --from .. --to .. --dest local:web/public/data`, then
+  `cd web && npm run dev` (TW_DATA_DIR points at the main checkout's data from the worktree).
+- MapLibre 6 needs `setWorkerUrl(...?worker&url)` under Vite (done in MapView.tsx).
+
 ## Next
-- Build M5 in the plan order: views, export, web, local check, Blob + Vercel, backfill, docs/PR.
+- Owner OK, then: create the public Blob store and the Vercel project (root `web/`,
+  `VITE_DATA_BASE_URL` = Blob URL); owner pastes `BLOB_READ_WRITE_TOKEN` into `.env`;
+  `tw export --dest blob` backfills all days (~1,100 PUTs at 2/s, ~10 min); phone check.
 - After the trial: `uv run tw worker-report --from 2026-10-28 --to 2026-10-31`. Done if:
   - no crashes;
   - longest poll gap < 5 min outside outages;
