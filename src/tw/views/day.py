@@ -14,10 +14,11 @@ Tiers:
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -268,6 +269,8 @@ def day_view(ctx: ViewContext, day: date, now: datetime) -> dict[str, Any] | Non
             "weekday": day.weekday(),
             "min_sortie_minutes": min_minutes,
             "min_baseline_samples": _min_samples(ctx),
+            "baseline_window_days": int(ctx.cfg["baseline"]["window_days"]),
+            "d1_min_z": float(ctx.cfg["d1_volume_surge"]["min_z"]),
             "coverage_min_ratio": float(guards["coverage_min_ratio"]),
             "coverage_max_ratio": float(guards["coverage_max_ratio"]),
             "generated_at": _iso(now),
@@ -304,7 +307,17 @@ def site_meta(ctx: ViewContext) -> dict[str, Any]:
         ],
         "families": {f: sorted(ctx.fleet.families[f]) for f in ctx.families},
         "attribution": sorted({providers["attribution"][p] for p in used}),
+        "official_alerts_from": _official_alerts_from(ctx),
     }
+
+
+def _official_alerts_from(ctx: ViewContext) -> str | None:
+    """The first day with official alerts: the day before the worker first started (M4)."""
+    path = ctx.data_dir / "worker" / "state.json"
+    if not path.exists():
+        return None
+    first = date.fromisoformat(json.loads(path.read_text())["first_start"])
+    return (first - timedelta(days=1)).isoformat()
 
 
 def site_index(ctx: ViewContext) -> dict[str, Any]:

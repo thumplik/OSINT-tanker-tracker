@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/mapview.tsx","./src/data.ts","./src/heat.test.ts","./src/heat.ts","./src/main.tsx","./src/panels.tsx","./src/state.test.ts","./src/state.ts","./src/types.ts","./src/wording.ts","./vite.config.ts"],"version":"5.9.3"}
