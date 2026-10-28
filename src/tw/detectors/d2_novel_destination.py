@@ -9,25 +9,26 @@ from collections.abc import Mapping, Sequence
 from datetime import date
 from typing import Any
 
-from tw.detectors.types import Alert, Arrival, alert_id, day_window
+from tw.detectors.types import Alert, Arrival, Window, alert_id, as_window
 
 DETECTOR = "D2"
 
 
 def detect_d2(
-    day: date,
+    when: date | Window,
     arrivals: Sequence[Arrival],
     baseline: Mapping[tuple[str, str], int],
     history_days: int,
     cfg: Mapping[str, Any],
 ) -> list[Alert]:
-    """`arrivals`: closed sorties arriving in the window ending with `day`. `baseline`: distinct
-    aircraft per (airfield, family) seen before the window. `history_days`: days with data in
-    that same pre-window interval (missing days excluded)."""
+    """`when`: a UTC day (the window ending with it) or a window. `arrivals`: closed sorties
+    arriving in the window. `baseline`: distinct aircraft per (airfield, family) seen before
+    the window. `history_days`: days with data in that same pre-window interval (missing days
+    excluded)."""
     rules = cfg["d2_novel_destination"]
     if history_days < int(cfg["baseline"]["min_history_days"]):
         return []
-    start, end = day_window(day, int(rules["window_hours"]) // 24)
+    start, end = as_window(when, float(rules["window_hours"]))
     groups: dict[tuple[str, str], list[Arrival]] = defaultdict(list)
     for a in arrivals:
         groups[(a.airfield, a.family)].append(a)

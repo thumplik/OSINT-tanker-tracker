@@ -41,3 +41,31 @@ airfields:
   runways_url: "https://davidmegginson.github.io/ourairports-data/runways.csv"
   types: [large_airport, medium_airport, small_airport]
   min_runway_ft: 3000           # any surface: C-130s use dirt strips
+
+# Live polling for the worker (SPEC §2, §4). Every request goes through ingest/ratelimit.py.
+# Base URLs can be overridden in .env (`env` names the variable); the path is the military
+# endpoint, which returns tracked aircraft worldwide in one request.
+live:
+  # Primary first; fail over down the list. airplanes.live answers 403 "please contact us" to
+  # unregistered projects (checked 2026-10-27), so it stays out until the owner registers.
+  order: [adsb_lol, adsb_fi]
+  providers:
+    adsb_lol:
+      env: ADSBLOL_BASE_URL
+      default_base_url: "https://api.adsb.lol"
+      path: /v2/mil
+    airplanes_live:
+      env: AIRPLANESLIVE_BASE_URL
+      default_base_url: "https://api.airplanes.live"
+      path: /v2/mil
+    adsb_fi:
+      env: ADSBFI_BASE_URL
+      default_base_url: "https://opendata.adsb.fi/api"
+      path: /v2/mil
+  poll_seconds: 15
+  timeout_s: 20
+  failover_after: 3             # consecutive failures before switching to the next provider
+  failback_minutes: 15          # then try the primary again after this long
+  backoff_base_s: 15            # wait after a failure doubles from this ...
+  max_backoff_s: 300            # ... up to this (HTTP 429 always waits)
+  raw_retention_days: 14        # SPEC §2: raw responses kept 14 days

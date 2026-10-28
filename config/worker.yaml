@@ -1,0 +1,10 @@
+# Worker schedule (SPEC §4). All times UTC.
+flush_minutes: 5                # re-derive the current hour's live points from raw this often
+provisional_minute: 5           # hourly rolling-window detection runs at HH:05
+# Official tier: the adsb.lol release for day D appears ~03:25 UTC on D+1 (checked Oct 2026).
+official_at: "03:40"
+official_retry_minutes: 30
+official_give_up_hour: 12       # after this, a day without a release waits for the next night
+catchup_days: 7                 # official days to look back over for missing loads
+retention_at: "05:00"
+heartbeat_seconds: 60

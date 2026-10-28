@@ -11,7 +11,8 @@ unusual, and drafts short posts for a human to review before anything is publish
 It reports **what** is unusual, never **why**.
 
 > 🚧 **Early development.** M0–M3 are done: a year of history, sorties with airfields, baselines, the
-> D1 and D2 detectors and a backtest report. No live worker, dashboard or posting yet. See the [roadmap](#roadmap).
+> D1 and D2 detectors and a backtest report. The M4 live worker is built and on its 72-hour trial.
+> No dashboard or posting yet. See the [roadmap](#roadmap).
 
 ---
 
@@ -125,7 +126,8 @@ Data goes to `./data` by default. Set `TW_DATA_DIR` to change it (see [`.env.exa
 | `tw airfields update` | ✅ | Rebuild `config/airfields.csv` from OurAirports |
 | `tw replay --from D --to D` | ✅ | Aggregates → baselines → D1, D2 → guards over stored days; prints alerts, stores none |
 | `tw backtest --months 6` | ✅ | Writes `reports/backtest_<date>.md`: alert rate, top alerts, guard suppressions, z sweep |
-| `tw worker` | M4 | Live ingest and detection |
+| `tw worker [--once]` | M4 | Poll `/v2/mil` every 15 s (adsb.lol, adsb.fi fallback), hourly provisional rolling windows, nightly official alerts from the release |
+| `tw worker-report --from D --to D` | M4 | Writes `reports/worker_<date>.md`: uptime, poll gaps, requests per provider vs rate limits, failures, provisional vs official |
 | `tw api` | M5 | Dashboard read API |
 
 ## Project layout
@@ -155,7 +157,7 @@ web/             dashboard (React + MapLibre + deck.gl, on Vercel)
 | ✅ | **M1** Historical loader, normalize, partitioned storage | 12 months loaded, counts look sane |
 | ✅ | **M2** Sortie segmenter and airfield resolution | ≥ 90% of ends seen low resolve to an airfield |
 | ✅ | **M3** Baselines, D1, D2 and the coverage guard | Backtest report generated |
-| ⬜ | **M4** Live ingest worker | Runs 72h unattended within rate limits |
+| 🟡 | **M4** Live ingest worker | Runs 72h unattended within rate limits (trial running) |
 | ⬜ | **M5** Dashboard with heat map, alert feed and date picker | Any day loads in < 1 s |
 | ⬜ | **M5b** Playback, compare mode, retrospective re-runs | Point-in-time test passes |
 | ⬜ | **M6** D3–D5 and composite scoring | Backtest precision reviewed |

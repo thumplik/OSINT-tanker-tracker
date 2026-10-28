@@ -109,6 +109,19 @@ def snapshot_exists(data_dir: Path, as_of: date) -> bool:
     return partition_dir(data_dir, BL_REGION_FAMILY, as_of).exists()
 
 
+def latest_snapshot(data_dir: Path, on_or_before: date) -> date | None:
+    """The newest snapshot date <= `on_or_before`, or None."""
+    base = data_dir / BL_REGION_FAMILY
+    if not base.exists():
+        return None
+    days = [
+        date.fromisoformat(p.name[6:])
+        for p in base.iterdir()
+        if p.name.startswith("as_of=") and p.name[6:] <= on_or_before.isoformat()
+    ]
+    return max(days, default=None)
+
+
 def build_baseline(
     as_of: date,
     data_dir: Path,

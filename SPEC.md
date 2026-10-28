@@ -25,15 +25,15 @@ All providers below speak the ADS-B Exchange v2 JSON schema, so one adapter inte
 | Role | Provider | Notes |
 |---|---|---|
 | Baseline history | adsb.lol `globe_history` dumps | Free, ODbL. Use for the 90-day baseline and backtests. |
-| Live primary | adsb.lol or airplanes.live `/v2` | Free tiers, ~1 req/s. Prefer the military endpoint where offered. |
-| Live fallback | adsb.fi open data | Personal, non-commercial; attribution and link required. |
+| Live primary | adsb.lol `/v2/mil` | Free, ~1 req/s. Polled every 15 s by the worker. |
+| Live fallback | adsb.fi open data `/v2/mil` | Personal, non-commercial; attribution and link required. airplanes.live answers 403 until a project registers with them (checked Oct 2026), so it is configured but not in the failover order. |
 | Upgrade path | ADS-B Exchange (RapidAPI or commercial) | Paid; no bulk redistribution. |
 | Reference | OurAirports CSV | Airfield lat/lon, ICAO codes, type (military vs civil). |
 
 Rules:
 
 - Respect each provider's rate limit with a token bucket per provider.
-- Store raw responses (gzip JSONL) for 14 days so any alert can be re-derived.
+- Store raw responses (gzip JSONL, `raw/date=D/<provider>-HH.jsonl.gz`) for 14 days so any alert can be re-derived. Every outbound live request is also logged (`worker/requests/`), which is how rate limits are shown to be respected.
 - Keep normalized points, sorties, baselines and alerts **forever** (see §11). Filtered to the tracked fleet, this is small: expect well under 1 GB per year in Parquet.
 - Backfill: load as far back as the history dumps allow (target 12+ months) so the historical view and backtests have depth from day one.
 - History dumps come from the `prod` pod releases only (`v<date>-planes-readsb-prod-0`). Pods are not mixed, because that could double-count aircraft and shift coverage. Releases are streamed, not stored, since any day can be re-downloaded. A day with no release is reported as missing and never treated as a day with zero activity.
@@ -99,6 +99,18 @@ providers ──▶ ingest worker ──▶ raw store (JSONL.gz)
 - **Hand-off between them**: the worker publishes per-day aggregates, sorties and alerts to shared storage that Vercel reads: Postgres (e.g. Neon) for alerts and the approval queue, and object storage (e.g. Vercel Blob) for daily Parquet/aggregate files. Raw points stay on the worker.
 - Approve/reject writes go to Postgres; the worker picks up approved alerts and posts them. The X credentials live only on the worker.
 
+### Worker (M4)
+
+`tw worker` runs these jobs (times UTC, all in `config/worker.yaml` / `providers.yaml`):
+
+- **poll** every 15 s: one rate-limited `/v2/mil` request; after 3 consecutive failures it fails over to the next provider and tries the primary again after 15 min; failures back off exponentially (15 s → 5 min).
+- **flush** every 5 min: live points for the current and previous hour are re-derived from raw (`live/points/`), so a crash loses nothing that was fetched.
+- **provisional** hourly at :05: live sorties (`live/sorties/`, same segmenter), then rolling-window D1/D2 (§8) → `provisional_alerts/`.
+- **official** every 30 min from 03:40 on D+1 (the release lands ~03:25) until 12:00, then once a night: load day D's release, build its sorties, run the day pipeline, write `alerts/date=D/` once, then build today's baseline snapshot. Days before the worker's first start are history (backtest), not official alerts.
+- **retention** daily: delete raw older than 14 days. **heartbeat**: `worker/status.json`.
+
+Live data never enters the official `points/`/`sorties/` datasets: each official day comes from exactly one release (§2).
+
 ## 5. Core data model
 
 **Point**: `ts, hex, callsign, type, lat, lon, alt_baro, gs, track, on_ground, position_source, provider, h3_r4, h3_r6`
@@ -114,6 +126,8 @@ providers ──▶ ingest worker ──▶ raw store (JSONL.gz)
 **Coverage**: per H3 r4 cell per hour, count of *all* aircraft seen (civil included). This is the denominator that separates real surges from receiver coverage changes.
 
 **Alert**: `alert_id, detector, region, window, observed, expected, score, severity, evidence{}, sortie_ids[], created_at, status (new|approved|rejected|posted|suppressed), post_draft, chart_path`
+
+Stored in two places: `alerts/date=D/` (official, write-once; the only source for the post queue) and `provisional_alerts/date=D/part-HH` (live rolling windows, `evidence.tier = provisional`; never queued or posted).
 
 ## 6. Regions
 
@@ -148,7 +162,7 @@ For each key, an alert requires all four of:
 - Rebuilt nightly from a trailing 56-day window (configurable)
 - Keyed by `(region, family, day_of_week)` and, where needed, `(airfield, family)` and `(route, family)`
 - Inputs are per-day aggregates (`aggregates/*/date=D/`). A sortie counts once in **every region it flies in** (any of its H3 r4 cells), and sorties shorter than `counting.min_sortie_minutes` (30) don't count (both decided Oct 2026). Days without data are skipped, never zero.
-- v1 evaluates whole UTC days (window end = midnight); the M4 worker adds rolling windows over the same functions.
+- Official runs evaluate whole UTC days (window end = midnight). The M4 worker's provisional tier evaluates rolling windows of the same length (`window_hours`) ending on each hour, with the same counting and detectors, against the latest official snapshot (as_of ≤ the window's end date), compared on the weekday of the window's midpoint. It never builds a snapshot: one built before the previous day's release is loaded would miss that day for good.
 - Robust statistics: median and MAD. No means/standard deviations on sparse counts.
 - Minimum history: a key with fewer than 4 weeks of data cannot alert. It is shown as "insufficient baseline".
 
@@ -169,6 +183,11 @@ Every detector is a pure function: `(window_data, baseline, config) -> list[Aler
 - **Coverage guard**: suppress if regional total traffic is below 60% or above 167% of its own weekday baseline (the upper bound added Oct 2026, after Gulf days at 5-7x). Fewer receivers means fake drops; recovered receivers mean fake surges. A region with no coverage baseline cannot be checked and is suppressed. Suppressed alerts keep their record and reason.
 - **Exercise calendar**: optional `config/known_events.yaml` (announced exercises, air shows). Matching alerts are downgraded and labeled, not hidden.
 - **Cooldown**: same detector + region cannot alert again within 12h unless severity rises. This includes alerts from the same run: the strongest (severity, then score) is kept and the rest are suppressed on the record.
+
+### Two tiers (decided Oct 2026)
+
+- **Official**: the nightly run on the release, with every guard. These are the alerts of record.
+- **Provisional**: hourly rolling windows on live `/v2/mil` data. The live feed has no civil traffic, so the coverage guard cannot run; these alerts skip only that guard, carry `coverage: unchecked`, and never go to the post queue. The worker report compares them with the official run.
 
 ### Composite scoring
 
@@ -283,7 +302,7 @@ Rules for every ML stage:
 | M1 | Historical loader + normalize/filter, date-partitioned storage | 12 months of history loaded; per-family counts look sane |
 | M2 | Track segmenter + airfield resolution | ≥ 90% of origins and destinations seen low (on the ground or < 5,000 ft AGL) resolve to an airfield. Ends first/last seen at altitude are coverage edges and are reported, not counted (decided Oct 2026) |
 | M3 | Baselines + D1, D2 + coverage guard | Backtest report generated |
-| M4 | Live ingest worker | Runs 72h unattended; rate limits respected |
+| M4 | Live ingest worker | Runs 72h unattended; rate limits respected (both read off `tw worker-report`, from the worker's request log) |
 | M5 | Dashboard (heat map, alert feed) with date picker | Usable on desktop and phone; any backfilled day loads in < 1 s |
 | M5b | Playback, compare mode, retrospective alert re-run | Scrub a full day smoothly; point-in-time test passes |
 | M6 | D3–D5, composite scoring | Backtest precision reviewed |

@@ -1,4 +1,5 @@
-"""D1 volume surge (SPEC §7-8): region x family sorties in a day, against that weekday's baseline.
+"""D1 volume surge (SPEC §7-8): region x family sorties in a window (a UTC day, or a rolling
+24 h window in the provisional tier), against that weekday's baseline.
 
 Fires only when all four hold: the count is surprising (robust z), real (it outgrows regional
 coverage by `min_coverage_normalized_ratio`), material (`min_count`), and the key has at least
@@ -13,20 +14,29 @@ from datetime import date
 from typing import Any
 
 from tw.baselines.stats import robust_z_from
-from tw.detectors.types import Alert, KeyBaseline, RegionCount, alert_id, day_window, finite
+from tw.detectors.types import (
+    Alert,
+    KeyBaseline,
+    RegionCount,
+    Window,
+    alert_id,
+    as_window,
+    finite,
+)
 
 DETECTOR = "D1"
 
 
 def detect_d1(
-    day: date,
+    when: date | Window,
     counts: Sequence[RegionCount],
     baseline: Mapping[tuple[str, str], KeyBaseline],
     coverage: Mapping[str, float],
     coverage_baseline: Mapping[str, KeyBaseline],
     cfg: Mapping[str, Any],
 ) -> list[Alert]:
-    """`baseline` and `coverage_baseline` are for `day`'s weekday, from the snapshot as of `day`.
+    """`when` is a UTC day or a window. `baseline` and `coverage_baseline` are for the window's
+    weekday (`Window.weekday`), from the snapshot as of the window's end date.
 
     When coverage can't be compared (no baseline, or no traffic seen), the coverage-normalized
     check can't run: the candidate is still returned, with `normalized_ratio` None, so the
@@ -34,7 +44,8 @@ def detect_d1(
     rules, base = cfg["d1_volume_surge"], cfg["baseline"]
     min_samples = math.ceil(int(base["min_history_days"]) / 7)
     median_floor = float(rules["normalization_median_floor"])
-    start, end = day_window(day)
+    window = as_window(when, float(rules["window_hours"]))
+    start, end = window
     alerts = []
     for c in counts:
         bl, cov_bl = baseline.get((c.region, c.family)), coverage_baseline.get(c.region)
@@ -68,14 +79,14 @@ def detect_d1(
                 severity="medium" if medium else "low",
                 evidence={
                     "family": c.family,
-                    "weekday": day.weekday(),
+                    "weekday": window.weekday,
                     "mad": bl.mad,
                     "n_days": bl.n_days,
                     "normalized_ratio": None if normalized is None else round(normalized, 3),
                 },
                 sortie_ids=tuple(sorted(c.sortie_ids)),
                 created_at=end,
-                basis_days=(day,),
+                basis_days=window.days,
             )
         )
     return sorted(alerts, key=lambda a: (a.region, a.evidence["family"]))
