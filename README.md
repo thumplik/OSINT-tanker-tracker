@@ -12,7 +12,8 @@ It reports **what** is unusual, never **why**.
 
 > 🚧 **Early development.** M0–M3 are done: a year of history, sorties with airfields, baselines, the
 > D1 and D2 detectors and a backtest report. The M4 live worker is built and on its 72-hour trial.
-> No dashboard or posting yet. See the [roadmap](#roadmap).
+> The M5 dashboard (map, alerts, regions, sorties, any past day) is built; deployment is next.
+> No posting yet. See the [roadmap](#roadmap).
 
 ---
 
@@ -128,7 +129,7 @@ Data goes to `./data` by default. Set `TW_DATA_DIR` to change it (see [`.env.exa
 | `tw backtest --months 6` | ✅ | Writes `reports/backtest_<date>.md`: alert rate, top alerts, guard suppressions, z sweep |
 | `tw worker [--once]` | M4 | Poll `/v2/mil` every 15 s (adsb.lol, adsb.fi fallback), hourly provisional rolling windows, nightly official alerts from the release |
 | `tw worker-report --from D --to D` | M4 | Writes `reports/worker_<date>.md`: uptime, poll gaps, requests per provider vs rate limits, failures, provisional vs official |
-| `tw api` | M5 | Dashboard read API |
+| `tw export [--from D --to D] [--dest local:<dir>\|blob]` | M5 | Dashboard day files (JSON) to `web/public/data` or Vercel Blob (`BLOB_READ_WRITE_TOKEN` in `.env`); no dates exports every day with data |
 
 ## Project layout
 
@@ -142,7 +143,8 @@ src/tw/
   baselines/     daily aggregates and median/MAD snapshots as of each day
   detectors/     D1, D2 and guards (D3–D5 and composite scoring in M6). Pure functions
   publisher/     templates, validator, charts, approval-gated X client (M7)
-  api/           FastAPI read routes                              (M5)
+  views/         point-in-time day views for the dashboard         (M5)
+  export/        day views to local files or Vercel Blob           (M5)
 config/          fleet, regions, detectors, providers, events, language, publisher
 tests/           unit tests and synthetic fixtures (tests never call live APIs)
 eval/            hand-labeled truth set for choosing thresholds
@@ -158,7 +160,7 @@ web/             dashboard (React + MapLibre + deck.gl, on Vercel)
 | ✅ | **M2** Sortie segmenter and airfield resolution | ≥ 90% of ends seen low resolve to an airfield |
 | ✅ | **M3** Baselines, D1, D2 and the coverage guard | Backtest report generated |
 | 🟡 | **M4** Live ingest worker | Runs 72h unattended within rate limits (trial running) |
-| ⬜ | **M5** Dashboard with heat map, alert feed and date picker | Any day loads in < 1 s |
+| 🟡 | **M5** Dashboard with heat map, alert feed and date picker | Any day loads in < 1 s (built; deploy pending) |
 | ⬜ | **M5b** Playback, compare mode, retrospective re-runs | Point-in-time test passes |
 | ⬜ | **M6** D3–D5 and composite scoring | Backtest precision reviewed |
 | ⬜ | **M7** Publisher with approval queue | First approved post |

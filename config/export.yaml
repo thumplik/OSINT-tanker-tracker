@@ -1,0 +1,8 @@
+# Dashboard export (SPEC §4, §11, M5). The site reads these static files.
+# CDN cache lifetimes (seconds). An official day changes only if it is re-exported (a code or
+# config change); provisional days, the index and site metadata change every hour.
+cache_seconds:
+  official_day: 86400
+  provisional_day: 60
+  index: 60
+  meta: 300

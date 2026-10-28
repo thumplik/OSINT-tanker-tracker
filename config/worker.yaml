@@ -8,3 +8,9 @@ official_give_up_hour: 12       # after this, a day without a release waits for 
 catchup_days: 7                 # official days to look back over for missing loads
 retention_at: "05:00"
 heartbeat_seconds: 60
+
+# Dashboard export (M5, SPEC §4): hourly for today and yesterday, plus any day the official run
+# just loaded. Uses Vercel Blob when BLOB_READ_WRITE_TOKEN is set, else skips.
+export_enabled: true
+export_minute: 15               # hourly, after the provisional run
+export_days_back: 1             # today plus this many earlier days

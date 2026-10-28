@@ -6,6 +6,7 @@ rate_limits:
   adsb_lol_history: [0.5, 1]     # globe_history release part downloads
   adsb_lol_history_probe: [4.0, 4]  # 512-byte tar header range reads (~50 per day)
   ourairports: [0.5, 1]          # two CSV downloads per `tw airfields update`
+  vercel_blob: [2.0, 2]          # dashboard file uploads (a backfill is ~1,100 PUTs)
 attribution:
   adsb_lol: "adsb.lol (ODbL)"
   airplanes_live: "airplanes.live"
@@ -69,3 +70,11 @@ live:
   backoff_base_s: 15            # wait after a failure doubles from this ...
   max_backoff_s: 300            # ... up to this (HTTP 429 always waits)
   raw_retention_days: 14        # SPEC §2: raw responses kept 14 days
+
+# Dashboard hand-off (SPEC §4, M5): the exporter uploads static day files to Vercel Blob. The
+# token is BLOB_READ_WRITE_TOKEN in .env, never logged. Request format follows @vercel/blob 2.8
+# (checked 2026-10-28): PUT <api_url>/?pathname=..., option headers x-*.
+blob:
+  api_url: "https://vercel.com/api/blob"
+  api_version: 13
+  timeout_s: 60
