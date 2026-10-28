@@ -229,7 +229,52 @@ def _build_worker() -> Any:
     limiter = RateLimiter.from_config()
     history = HistoryConfig.load()
     client = LiveClient(live, http_fetch(live), limiter)
-    return Worker(_data_dir(), client, limiter, history, http_opener(history))
+    worker = Worker(_data_dir(), client, limiter, history, http_opener(history))
+    worker.sink = _blob_sink(limiter, required=False)
+    return worker
+
+
+def _blob_sink(limiter: Any, required: bool) -> Any:
+    """Vercel Blob sink from BLOB_READ_WRITE_TOKEN, or None when unset (and not required)."""
+    from tw.export.sinks import BlobConfig, BlobSink, blob_token, http_send
+
+    token = blob_token()
+    if token is None:
+        if required:
+            raise SystemExit("BLOB_READ_WRITE_TOKEN is not set (.env)")
+        return None
+    cfg = BlobConfig.load()
+    return BlobSink(token, cfg, limiter, http_send(cfg.timeout_s))
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    """Dashboard day files (SPEC §4, M5) to a local directory or Vercel Blob."""
+    from tw.export.run import export
+    from tw.export.sinks import LocalSink
+    from tw.ingest.ratelimit import RateLimiter
+    from tw.views.day import ViewContext, available_days
+
+    ctx = ViewContext(_data_dir())
+    if args.from_ is None:
+        days = list(available_days(ctx))
+    else:
+        last = args.to or args.from_
+        days = [args.from_ + timedelta(days=i) for i in range((last - args.from_).days + 1)]
+    if args.dest == "blob":
+        sink = _blob_sink(RateLimiter.from_config(), required=True)
+    elif args.dest.startswith("local:"):
+        sink = LocalSink(Path(args.dest[6:]))
+    else:
+        raise SystemExit("--dest must be blob or local:<dir>")
+    started = time.monotonic()
+    result = export(ctx, days, sink, datetime.now(UTC))
+    print(
+        f"exported {len(result.days)} day(s), {result.bytes / 1e6:.1f} MB "
+        f"in {time.monotonic() - started:.0f}s; no data for {len(result.missing)}"
+    )
+    if args.dest == "blob":
+        print(f"site data URL: {sink.base_url}")
+    return 0
 
 
 def cmd_worker(args: argparse.Namespace) -> int:
@@ -263,11 +308,6 @@ def cmd_worker_report(args: argparse.Namespace) -> int:
     path, respected = write_report(_data_dir(), args.from_, args.to, REPO / "reports")
     print(f"wrote {path} (rate limits respected: {'yes' if respected else 'NO'})")
     return 0 if respected else 1
-
-
-def _not_yet(milestone: str) -> int:
-    print(f"not implemented yet (milestone {milestone}, see SPEC §14)", file=sys.stderr)
-    return 2
 
 
 REBUILD_HELP = (
@@ -346,16 +386,32 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--to", type=date.fromisoformat, required=True)
     p.set_defaults(func=cmd_worker_report)
 
-    for name, milestone in [
-        ("api", "M5"),
-    ]:
-        p = sub.add_parser(name, help=f"(milestone {milestone})")
-        p.set_defaults(func=lambda _a, m=milestone: _not_yet(m))
+    p = sub.add_parser("export", help="dashboard day files to local:<dir> or Vercel Blob")
+    p.add_argument("--from", dest="from_", type=date.fromisoformat, help="first UTC day")
+    p.add_argument("--to", type=date.fromisoformat, help="last UTC day (default: --from)")
+    p.add_argument("--dest", default="local:web/public/data", help="blob | local:<dir>")
+    p.set_defaults(func=cmd_export)
     return parser
+
+
+def load_dotenv(path: Path = Path(".env")) -> None:
+    """KEY=VALUE lines from .env into the environment; variables already set win. Values are
+    never printed."""
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        value = value.strip().strip('"').strip("'")
+        if value:
+            os.environ.setdefault(key.strip(), value)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    load_dotenv()
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(line_buffering=True)  # progress shows up in redirected logs
     return int(args.func(args))

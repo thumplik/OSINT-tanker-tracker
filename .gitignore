@@ -11,3 +11,6 @@ reports/*
 *.egg-info/
 dist/
 .DS_Store
+web/public/data/
+web/node_modules/
+web/dist/

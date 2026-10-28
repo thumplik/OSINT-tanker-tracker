@@ -10,6 +10,8 @@ fixtures; `run()` puts them on an APScheduler. Every job is wrapped: an exceptio
   snapshot → `provisional_alerts/`. Never queued or posted.
 - official (every `official_retry_minutes`): load each released day not yet loaded, build its
   sorties, run the day pipeline and write `alerts/date=D/` once. Then today's snapshot.
+- export (hourly): dashboard day files for today and yesterday, plus days the official run just
+  wrote, to Vercel Blob (SPEC §4). Skipped when no sink is configured.
 - retention (daily): drop raw older than `raw_retention_days`.
 - heartbeat: `worker/status.json`.
 """
@@ -28,6 +30,8 @@ from typing import Any
 
 from tw.baselines.build import build_baseline
 from tw.config import Fleet, load_fleet, load_yaml
+from tw.export.run import export as export_days
+from tw.export.sinks import Sink
 from tw.ingest.history_download import HistoryConfig, Opener
 from tw.ingest.live import (
     Limiter,
@@ -52,6 +56,7 @@ from tw.store.parquet import partition_dir
 from tw.tracks.airfields import AirfieldIndex, load_airfields
 from tw.tracks.segment import SortieRules
 from tw.tracks.sorties import build_day
+from tw.views.day import ViewContext
 
 log = logging.getLogger("tw.worker")
 
@@ -71,6 +76,9 @@ class WorkerConfig:
     catchup_days: int
     retention_at: time
     heartbeat_seconds: float
+    export_enabled: bool
+    export_minute: int
+    export_days_back: int
 
     @classmethod
     def load(cls) -> WorkerConfig:
@@ -84,6 +92,9 @@ class WorkerConfig:
             catchup_days=int(raw["catchup_days"]),
             retention_at=_hhmm(str(raw["retention_at"])),
             heartbeat_seconds=float(raw["heartbeat_seconds"]),
+            export_enabled=bool(raw["export_enabled"]),
+            export_minute=int(raw["export_minute"]),
+            export_days_back=int(raw["export_days_back"]),
         )
 
 
@@ -126,6 +137,8 @@ class Worker:
     detectors: dict[str, Any] = field(default_factory=lambda: load_yaml("detectors.yaml"))
     index: AirfieldIndex | None = None
     status: dict[str, Any] = field(default_factory=dict)
+    sink: Sink | None = None  # dashboard export target; None skips the export job
+    _export_pending: set[date] = field(default_factory=set)
     _lock: threading.Lock = field(default_factory=threading.Lock)  # live point/sortie writes
 
     @property
@@ -224,6 +237,7 @@ class Worker:
             pending = not official_exists(self.data_dir, day) and self._official_due(day, now)
             if pending and self._official_day(day, now):
                 written.append(day)
+                self._export_pending.add(day)
             day += timedelta(days=1)
         yesterday = now.date() - timedelta(days=1)
         if partition_dir(self.data_dir, "points", yesterday).exists():
@@ -269,6 +283,29 @@ class Worker:
         )
         self.status["last_official_day"] = day.isoformat()
         return True
+
+    def export(self, now: datetime) -> list[date] | None:
+        """Dashboard files for today, the previous `export_days_back` days, and any day the
+        official run wrote since the last export. Returns the days written, None if skipped."""
+        if self.sink is None or not self.cfg.export_enabled:
+            return None
+        days = {now.date() - timedelta(days=n) for n in range(self.cfg.export_days_back + 1)}
+        days |= self._export_pending
+        with self._lock:  # a consistent view of live points and sorties
+            result = export_days(
+                ViewContext(self.data_dir, cfg=self.detectors), days, self.sink, now
+            )
+        self._export_pending -= days
+        self.status["last_export"] = now.isoformat()
+        log_event(
+            self.data_dir,
+            now,
+            "export",
+            days=result.days,
+            missing=result.missing,
+            bytes=result.bytes,
+        )
+        return result.days
 
     def retention(self, now: datetime) -> None:
         removed = prune_raw(self.data_dir, now.date(), self.client.cfg.raw_retention_days)
@@ -317,6 +354,7 @@ class Worker:
             minutes=c.official_retry_minutes,
             next_run_time=datetime.now(UTC) + timedelta(seconds=30),
         )
+        sched.add_job(self.guarded("export", self.export), "cron", minute=c.export_minute)
         sched.add_job(
             self.guarded("retention", self.retention),
             "cron",
