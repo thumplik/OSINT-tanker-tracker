@@ -185,10 +185,16 @@ def cmd_build_theater(args: argparse.Namespace) -> int:
     """Theater aggregates and write-once snapshots for stored days, in date order (M5c). Writes
     no alerts; the official run builds these itself from then on."""
     from tw.pipeline import Context, prepare_theater
+    from tw.theater.aggregates import AGG_AIRFIELDS, AGG_INVENTORY
 
     ctx = Context(_data_dir(), rebuild_baselines=args.rebuild_baselines)
     built = missing = 0
     for day in _range_days(args):
+        older = partition_dir(ctx.data_dir, AGG_INVENTORY, day).exists() and not (
+            partition_dir(ctx.data_dir, AGG_AIRFIELDS, day).exists()
+        )
+        if older:  # built before airfield presence existed (M5d): rebuild; deterministic
+            ctx.build_theater(day)
         if prepare_theater(day, ctx) is None:
             missing += 1
         else:

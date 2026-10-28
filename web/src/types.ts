@@ -153,6 +153,15 @@ export interface PositionRow {
   ccmd: string;
   quality: "ground" | "aloft" | "last_seen";
   airfield: string | null;
+  from_airfield: string | null; // where the flight ending at this fix began
+  departed: string | null;
+}
+
+export interface AirfieldInfo {
+  name: string;
+  lat: number;
+  lon: number;
+  ccmd: string;
 }
 
 export interface Theaters {
@@ -175,6 +184,22 @@ export interface Theaters {
   transits: TransitRow[]; // resolved within the window
   en_route: TransitRow[];
   positions?: PositionRow[]; // schema 3+: one per aircraft counted in `rows` inventory
+  airfields?: Record<string, AirfieldInfo>; // schema 3+: airfields that positions and stats name
+  airfield_stats?: AirfieldStat[]; // schema 3+
+}
+
+/** One airfield and family: today, and the on-ground count over the baseline window before it. */
+export interface AirfieldStat {
+  airfield: string;
+  family: string;
+  ground: number; // last seen on the ground here
+  airborne: number; // last flight left here; still tracked in the air
+  lost: number; // last flight left here; lost from view in the air
+  min: number | null;
+  max: number | null;
+  mean: number | null;
+  days: number; // days with data in the window
+  series: (number | null)[]; // daily on-ground count, oldest first; null: no data that day
 }
 
 export interface DayView {

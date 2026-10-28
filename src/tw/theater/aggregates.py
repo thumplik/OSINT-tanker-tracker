@@ -6,7 +6,9 @@ For day D, from sorties dated D - `lookback_days` .. D only (latest partition pe
   at the end of D, per (ccmd, family, type);
 - `aggregates/ccmd_moves`: CCMD changes whose arriving fix is on D (an exit and an entry each);
 - `aggregates/ccmd_transits`: trips out of the home CCMD resolved on D;
-- `aggregates/ccmd_coverage`: aircraft-hours per CCMD (civil included), the coverage denominator.
+- `aggregates/ccmd_coverage`: aircraft-hours per CCMD (civil included), the coverage denominator;
+- `aggregates/airfield_presence`: per (airfield, family), aircraft last seen on the ground there at
+  the end of D, and those whose last flight left there and are airborne or lost from view (M5d).
 
 Like the region aggregates, a day without points, sorties or coverage gets nothing: it is missing,
 never a day of zeros. The snapshot `baselines/ccmd/as_of=D` is write-once and uses only days
@@ -28,12 +30,13 @@ from tw.baselines.stats import mad, median
 from tw.provenance import code_version, effective_config_hash
 from tw.store.parquet import partition_dir, read_day, register_schema, write_partition
 from tw.theater.ccmd import CcmdMapper
-from tw.theater.flows import fixes, inventory, moves, presence, transits
+from tw.theater.flows import Fix, fixes, inventory, moves, presence, transits
 
 AGG_INVENTORY = "aggregates/ccmd_inventory"
 AGG_MOVES = "aggregates/ccmd_moves"
 AGG_TRANSITS = "aggregates/ccmd_transits"
 AGG_CCMD_COVERAGE = "aggregates/ccmd_coverage"
+AGG_AIRFIELDS = "aggregates/airfield_presence"
 BL_CCMD = "baselines/ccmd"
 PART = "theater"
 SERIES = ("entries", "exits", "transits")  # summed over the flow window
@@ -87,6 +90,18 @@ TRANSITS_SCHEMA = register_schema(
 CCMD_COVERAGE_SCHEMA = register_schema(
     AGG_CCMD_COVERAGE, pa.schema([("ccmd", pa.string()), ("aircraft_hours", pa.int64())])
 )
+AIRFIELDS_SCHEMA = register_schema(
+    AGG_AIRFIELDS,
+    pa.schema(
+        [
+            ("airfield", pa.string()),
+            ("family", pa.string()),
+            ("ground", pa.int32()),  # last seen on the ground here
+            ("airborne", pa.int32()),  # last flight left here; still tracked in the air
+            ("lost", pa.int32()),  # last flight left here; lost from view in the air
+        ]
+    ),
+)
 CCMD_BL_SCHEMA = register_schema(
     BL_CCMD,
     pa.schema(
@@ -132,7 +147,11 @@ def theater_day(
     home: str,
 ) -> dict[str, list[dict[str, Any]]]:
     """Pure: inventory at the end of `day`, moves on it, transits resolved on it, transits
-    still en route at its end, and the fix each counted aircraft is last seen at (`positions`)."""
+    still en route at its end, and the fix each counted aircraft is last seen at (`positions`).
+
+    Each position says where its flight began (`from_airfield`, `departed`): the sortie's origin,
+    or, when the sortie was first seen already airborne, the last airfield the aircraft was seen
+    on the ground at within `max_age_days` (and when it was last seen there)."""
     th = cfg["theater"]
     end = day_end(day)
     start = end - timedelta(days=1)
@@ -144,6 +163,23 @@ def theater_day(
     trips = transits(fx, home, timedelta(hours=float(th["dwell_hours"])), end)
     max_age = timedelta(days=float(th["max_age_days"]))
     latest = sorted(presence(fx, end, max_age).values(), key=lambda f: (f.family, f.hex))
+    # The last airfield each aircraft was seen on the ground at, before its latest fix: where a
+    # flight first seen already airborne most likely came from.
+    on_ground: dict[tuple[str, str], list[Fix]] = {}
+    for f in fx:  # sorted by hex, family, time
+        if f.quality == "ground" and f.airfield and f.ts > end - max_age:
+            on_ground.setdefault((f.hex, f.family), []).append(f)
+
+    by_id = {s["sortie_id"]: s for s in sorties}
+
+    def departure(f: Fix) -> dict[str, Any]:
+        s = by_id.get(f.sortie_id)
+        if s is not None and f.ts != s["start_ts"] and s["origin_icao"]:
+            return {"from_airfield": s["origin_icao"], "departed": s["start_ts"]}
+        earlier = [g for g in on_ground.get((f.hex, f.family), []) if g.ts < f.ts]
+        g = earlier[-1] if earlier else None
+        return {"from_airfield": g.airfield if g else None, "departed": g.ts if g else None}
+
     return {
         "inventory": inventory(fx, end, max_age),
         "moves": [m.__dict__ for m in moves(fx, start, end)],
@@ -155,14 +191,31 @@ def theater_day(
         "en_route": [
             {**t.__dict__, "via": list(t.via)} for t in trips if t.resolution == "en_route"
         ],
-        "positions": [f.__dict__ for f in latest],
+        "positions": [{**f.__dict__, **departure(f)} for f in latest],
     }
+
+
+def airfield_presence(positions: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Pure: per (airfield, family), aircraft on the ground there and those whose last flight left
+    there, still airborne or lost from view. Aircraft on the ground away from any airfield, and
+    flights with no known departure, are in no row."""
+    out: dict[tuple[str, str], dict[str, int]] = defaultdict(
+        lambda: {"ground": 0, "airborne": 0, "lost": 0}
+    )
+    for p in positions:
+        if p["quality"] == "ground":
+            code, col = p["airfield"], "ground"
+        else:
+            code, col = p["from_airfield"], "airborne" if p["quality"] == "last_seen" else "lost"
+        if code:
+            out[(code, p["family"])][col] += 1
+    return [{"airfield": a, "family": f, **n} for (a, f), n in sorted(out.items())]
 
 
 def build_theater(
     day: date, data_dir: Path, mapper: CcmdMapper, cfg: Mapping[str, Any], home: str
 ) -> bool:
-    """Write the four theater partitions for `day`; False (writing nothing) when the day is
+    """Write the theater partitions for `day`; False (writing nothing) when the day is
     incomplete."""
     if not all(
         partition_dir(data_dir, ds, day).exists() for ds in ("points", "sorties", "coverage")
@@ -177,6 +230,9 @@ def build_theater(
     write_partition(data_dir, AGG_INVENTORY, day, out["inventory"], INVENTORY_SCHEMA, PART)
     write_partition(data_dir, AGG_MOVES, day, out["moves"], MOVES_SCHEMA, PART)
     write_partition(data_dir, AGG_TRANSITS, day, out["transits"], TRANSITS_SCHEMA, PART)
+    write_partition(
+        data_dir, AGG_AIRFIELDS, day, airfield_presence(out["positions"]), AIRFIELDS_SCHEMA, PART
+    )
     write_partition(
         data_dir,
         AGG_CCMD_COVERAGE,

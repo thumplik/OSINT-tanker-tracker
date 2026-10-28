@@ -4,13 +4,14 @@ import { DEFAULT_STATE, parseState, serializeState, stepDate } from "./state";
 describe("URL state", () => {
   it("round-trips a full view", () => {
     const s = parseState(
-      "?date=2026-10-27&family=strategic_airlift&region=europe&ccmd=centcom&hour=14&tab=sorties&map=activity",
+      "?date=2026-10-27&family=strategic_airlift&region=europe&ccmd=centcom&field=KCHS&hour=14&tab=sorties&map=activity",
     );
     expect(s).toEqual({
       date: "2026-10-27",
       family: "strategic_airlift",
       region: "europe",
       ccmd: "centcom",
+      field: "KCHS",
       res: 4,
       hour: 14,
       tab: "sorties",

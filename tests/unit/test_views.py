@@ -204,10 +204,19 @@ def test_theaters_keep_families_apart_and_judge_against_the_snapshot(tmp_path):
     assert len(th["history"]["eucom|tanker"]) == 180 and th["history"]["eucom|tanker"][-1] == 9
     assert th["history"]["eucom|tanker"][0] is None  # before the data: missing, never zero
     spots = {(p["ccmd"], p["family"]): p for p in th["positions"]}
-    assert (
-        len(th["positions"]) == 11 and spots[("centcom", "strategic_airlift")]["airfield"] == "OTBH"
-    )
+    assert len(th["positions"]) == 11
+    c17 = spots[("centcom", "strategic_airlift")]
+    assert (c17["airfield"], c17["from_airfield"], c17["quality"]) == ("OTBH", "KDOV", "ground")
+    assert c17["departed"] < c17["ts"]
+    assert th["airfields"]["OTBH"]["ccmd"] == "centcom"  # every named airfield is described
+    assert {p["airfield"] for p in th["positions"]} | {"KDOV"} <= set(th["airfields"])
     assert th["window_complete"] and th["baseline_as_of"] == D.isoformat()
+    card = {(r["airfield"], r["family"]): r for r in th["airfield_stats"]}[("ETAR", "tanker")]
+    assert card["ground"] == 9 and card["days"] == 56 and len(card["series"]) == 56
+    assert card["min"] <= card["mean"] <= card["max"]
+    dover = {(r["airfield"], r["family"]): r for r in th["airfield_stats"]}
+    assert ("KDOV", "strategic_airlift") not in dover  # both C-17s landed: nothing pending there
+    assert set(card) >= {"min", "max", "mean"} and "ETAR" in th["airfields"]
 
 
 def test_theaters_ignore_later_data(tmp_path):

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { loadDay, loadIndex, loadMeta, loadR6, NotFound } from "./data";
 import { cellsFor } from "./heat";
 import { MapView } from "./MapView";
+import { groupPositions } from "./overview";
+import { AirfieldsPanel } from "./AirfieldsPanel";
 import { OverviewPanel } from "./OverviewPanel";
 import { AlertsPanel, forFamily, RegionsPanel, SortiesPanel, TheatersPanel } from "./panels";
 import { parseState, serializeState, stepDate, TABS, type ViewState } from "./state";
@@ -11,6 +13,7 @@ import { familyLabel } from "./wording";
 
 const TAB_LABEL: Record<string, string> = {
   overview: "Overview",
+  airfields: "Airfields",
   alerts: "Alerts",
   theaters: "Theaters",
   sorties: "Flights",
@@ -120,9 +123,19 @@ export function App() {
         : [],
     [view, meta, state.family],
   );
-  const positions = useMemo(
-    () => (view?.theaters?.positions ?? []).filter((p) => p.family === state.family),
+  const grouped = useMemo(
+    () =>
+      groupPositions(
+        (view?.theaters?.positions ?? []).filter((p) => p.family === state.family),
+        view?.theaters?.airfields ?? {},
+      ),
     [view, state.family],
+  );
+  // An airfield opens its card on the Airfields tab when that tab is open, else on the Overview.
+  const onField = useCallback(
+    (code: string | null) =>
+      update({ field: code, tab: state.tab === "airfields" ? "airfields" : "overview" }),
+    [update, state.tab],
   );
   const at = view
     ? view.meta.tier === "official"
@@ -203,14 +216,15 @@ export function App() {
         </div>
       </header>
 
-      <main className="body">
+      <main className={`body ${state.tab === "airfields" ? "wide" : ""}`}>
         <section className="map-col">
           <MapView
             layer={state.layer}
             cells={cells}
             unit={unit}
-            positions={positions}
-            at={at}
+            grouped={grouped}
+            selectedField={state.field}
+            onField={onField}
             showRegions={state.tab === "regions" || state.tab === "sorties"}
             regions={meta?.regions ?? []}
             selectedRegion={state.region}
@@ -237,8 +251,9 @@ export function App() {
             </div>
             {state.layer === "positions" ? (
               <span className="hint">
-                Last known position of each aircraft at{" "}
-                {view?.meta.tier === "official" ? "the end of the day" : `${at.slice(11, 16)}Z`}
+                Where each aircraft was last seen, as of{" "}
+                {view?.meta.tier === "official" ? "the end of the day" : `${at.slice(11, 16)}Z`}.
+                Click an airfield for its aircraft.
               </span>
             ) : (
               <>
@@ -308,7 +323,24 @@ export function App() {
                 family={state.family}
                 ccmd={state.ccmd}
                 onCcmd={onCcmd}
+                grouped={grouped}
+                field={state.field}
+                onField={onField}
+                at={at}
                 onRegion={(id: string | null) => update({ region: id, tab: "regions" })}
+              />
+            )}
+            {view && state.tab === "airfields" && (
+              <AirfieldsPanel
+                view={view}
+                meta={meta}
+                family={state.family}
+                ccmd={state.ccmd}
+                onCcmd={onCcmd}
+                grouped={grouped}
+                field={state.field}
+                onField={onField}
+                at={at}
               />
             )}
             {view && state.tab === "alerts" && (

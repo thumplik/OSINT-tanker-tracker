@@ -14,6 +14,7 @@ Tiers:
 
 from __future__ import annotations
 
+import functools
 import json
 import math
 from collections import defaultdict
@@ -41,12 +42,14 @@ from tw.provenance import code_version, effective_config_hash
 from tw.store.alerts import OFFICIAL, PROVISIONAL, read_alerts
 from tw.store.parquet import partition_dir, read_day
 from tw.theater.aggregates import (
+    AGG_AIRFIELDS,
     AGG_CCMD_COVERAGE,
     AGG_INVENTORY,
     AGG_MOVES,
     AGG_TRANSITS,
     BL_CCMD,
     SERIES,
+    airfield_presence,
     daily_counts,
     day_end,
     inventory_totals,
@@ -55,6 +58,7 @@ from tw.theater.aggregates import (
     theater_day,
 )
 from tw.theater.ccmd import CcmdMapper, Ccmds, load_ccmds
+from tw.tracks.airfields import Airfield, load_airfields
 from tw.views.indicators import day_indicators
 
 Tier = Literal["official", "provisional"]
@@ -74,6 +78,11 @@ class ViewContext:
         self.mapper = RegionMapper(self.regions)
         self.ccmd_mapper = CcmdMapper(self.ccmds)
         self.cache = AggregateCache(self.data_dir)  # no `ensure`: views never write
+
+    @functools.cached_property
+    def airfields(self) -> dict[str, Airfield]:
+        """Airfields by the code sorties use (ICAO, else the OurAirports ident)."""
+        return {a.code: a for a in load_airfields()}
 
     @property
     def live_dir(self) -> Path:
@@ -315,6 +324,50 @@ def _ts_rows(rows: list[dict[str, Any]], keys: tuple[str, ...]) -> list[dict[str
     return [{**r, **{k: _iso(r[k]) for k in keys}} for r in rows]
 
 
+def _airfield_stats(
+    ctx: ViewContext, day: date, today: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Per (airfield, family): today's aircraft on the ground, and airborne / lost from view after
+    leaving there; plus the daily on-ground count over the `baseline.window_days` before `day`
+    (None where a day has no aggregate: missing, never zero) with its min, max and mean. Only
+    known airfields that had aircraft on the ground in the window or activity today."""
+    span = int(ctx.cfg["baseline"]["window_days"])
+    past = [ctx.cache.get(AGG_AIRFIELDS, day - timedelta(days=b)) for b in range(span, 0, -1)]
+    now = {(r["airfield"], r["family"]): r for r in today}
+    ground: dict[tuple[str, str], list[int | None]] = defaultdict(lambda: [0] * span)
+    for i, rows in enumerate(past):
+        for r in rows or []:
+            ground[(r["airfield"], r["family"])][i] = int(r["ground"])
+    out = []
+    for key in sorted(set(ground) | set(now)):
+        code, family = key
+        if code not in ctx.airfields:
+            continue
+        series: list[int | None] = [
+            None if rows is None else ground[key][i] if key in ground else 0
+            for i, rows in enumerate(past)
+        ]
+        seen = [v for v in series if v is not None]
+        r = now.get(key, {"ground": 0, "airborne": 0, "lost": 0})
+        if not any(seen) and not (r["ground"] or r["airborne"] or r["lost"]):
+            continue
+        out.append(
+            {
+                "airfield": code,
+                "family": family,
+                "ground": r["ground"],
+                "airborne": r["airborne"],
+                "lost": r["lost"],
+                "min": min(seen) if seen else None,
+                "max": max(seen) if seen else None,
+                "mean": round(sum(seen) / len(seen), 1) if seen else None,
+                "days": len(seen),
+                "series": series,
+            }
+        )
+    return out
+
+
 def _theaters(
     ctx: ViewContext, day: date, tier: Tier
 ) -> tuple[dict[str, Any], TheaterInputs | None]:
@@ -340,22 +393,48 @@ def _theaters(
         computed = theater_day(sorties, day, ctx.ccmd_mapper, ctx.cfg, ctx.ccmds.home)
         today, built = computed, True
     en_route = computed["en_route"]
-    callsigns = {s["sortie_id"]: (s["callsign"] or "").strip() or None for s in sorties}
+    by_id = {s["sortie_id"]: s for s in sorties}
+
+    recent_callsign: dict[str, str] = {}  # sorties are in start order: the latest wins
+    for srt in sorties:
+        if cs := (srt["callsign"] or "").strip():
+            recent_callsign[srt["hex"]] = cs
+
+    def callsign(f: Mapping[str, Any]) -> str | None:
+        """The fix's own flight's callsign, else the aircraft's latest one in the lookback."""
+        own = (by_id[f["sortie_id"]]["callsign"] or "").strip() if f["sortie_id"] in by_id else ""
+        return own or recent_callsign.get(f["hex"])
+
     positions = [
         {
             "hex": f["hex"],
             "type": f["type"],
             "family": f["family"],
-            "callsign": callsigns.get(f["sortie_id"]),
+            "callsign": callsign(f),
             "ts": _iso(f["ts"]),
             "lat": round(f["lat"], 2),
             "lon": round(f["lon"], 2),
             "ccmd": f["ccmd"],
             "quality": f["quality"],
             "airfield": f["airfield"],
+            "from_airfield": f["from_airfield"],
+            "departed": _iso(f["departed"]),
         }
         for f in computed["positions"]
     ]
+    stats = _airfield_stats(ctx, day, airfield_presence(computed["positions"]))
+    codes = {c for p in positions for c in (p["airfield"], p["from_airfield"]) if c}
+    codes |= {r["airfield"] for r in stats}
+    airfields = {
+        c: {
+            "name": a.name,
+            "lat": round(a.lat, 4),
+            "lon": round(a.lon, 4),
+            "ccmd": ctx.ccmd_mapper.at(a.lat, a.lon),
+        }
+        for c in sorted(codes)
+        if (a := ctx.airfields.get(c)) is not None
+    }
 
     # Flow sums over the window: today from `today`, earlier days from aggregates.
     sums: dict[tuple[str, str, str], int] = defaultdict(int)
@@ -491,6 +570,8 @@ def _theaters(
         ),
         "en_route": _ts_rows(en_route, ("depart_ts", "arrive_ts", "resolved_ts")),
         "positions": positions,
+        "airfields": airfields,  # the airfields `positions` and `airfield_stats` name
+        "airfield_stats": stats,
     }, inputs
 
 

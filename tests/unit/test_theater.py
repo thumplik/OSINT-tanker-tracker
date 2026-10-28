@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 
 from tw.config import load_yaml
-from tw.theater.aggregates import theater_day
+from tw.theater.aggregates import airfield_presence, theater_day
 from tw.theater.ccmd import CcmdMapper, load_ccmds
 from tw.theater.flows import fixes, inventory, moves, presence, transits
 
@@ -150,3 +150,48 @@ def test_positions_are_each_aircrafts_latest_fix_up_to_the_day():
     assert {p["hex"]: p["ccmd"] for p in day2["positions"]} == {"a": "centcom", "k": "eucom"}
     totals = {(r["ccmd"], r["family"]): r["aircraft"] for r in day2["inventory"]}
     assert len(day2["positions"]) == sum(totals.values())  # one position per counted aircraft
+
+
+def test_position_remembers_the_last_airfield_seen_on_the_ground():
+    rows = [
+        sortie("a", 0, 8, "KDOV", "ETAR"),  # landed at Ramstein
+        # next flight first seen already airborne, then lost from view
+        sortie(
+            "a",
+            30,
+            6,
+            "ETAR",
+            "OTBH",
+            origin_icao=None,
+            start_seen_low=False,
+            end_seen_low=False,
+            dest_icao=None,
+        ),
+    ]
+    cfg = load_yaml("detectors.yaml")
+    (p,) = theater_day(rows, (T0 + timedelta(days=1)).date(), MAPPER, cfg, "northcom")["positions"]
+    assert (p["quality"], p["from_airfield"], p["departed"]) == (
+        "aloft",
+        "ETAR",
+        T0 + timedelta(hours=8),
+    )
+
+
+def test_airfield_presence_counts_ground_and_departures_per_family():
+    rows = [
+        sortie("a", 0, 8, "KDOV", "ETAR"),  # on the ground at Ramstein
+        sortie("b", 0, 8, "KDOV", "ETAR", family="tanker", type_="K35R"),
+        sortie("c", 0, 8, "KDOV", "OTBH", end_seen_low=False, dest_icao=None),  # lost, from KDOV
+        sortie("d", 0, 10, "KDOV", "OTBH", is_open=True, end_seen_low=False),  # still flying
+    ]
+    cfg = load_yaml("detectors.yaml")
+    positions = theater_day(rows, T0.date(), MAPPER, cfg, "northcom")["positions"]
+    got = {
+        (r["airfield"], r["family"]): (r["ground"], r["airborne"], r["lost"])
+        for r in airfield_presence(positions)
+    }
+    assert got == {
+        ("ETAR", "strategic_airlift"): (1, 0, 0),
+        ("ETAR", "tanker"): (1, 0, 0),
+        ("KDOV", "strategic_airlift"): (0, 1, 1),
+    }

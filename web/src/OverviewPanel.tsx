@@ -1,14 +1,22 @@
-import { useMemo, useRef, useState } from "react";
-import { dayBefore, standout, totalSeries, typicalOf, whereNow } from "./overview";
-import { byLabel } from "./theater";
-import type { AlertRow, DayView, SiteMeta } from "./types";
-import { alertNumbers, alertTitle, familyLabel, regionName } from "./wording";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  dayBefore,
+  type FieldGroup,
+  type Grouped,
+  standout,
+  totalSeries,
+  typicalOf,
+  whereNow,
+} from "./overview";
+import { byLabel, TYPE_LABEL } from "./theater";
+import type { AlertRow, DayView, PositionRow, SiteMeta } from "./types";
+import { alertNumbers, alertTitle, familyLabel, hhmm, regionName } from "./wording";
 
 // ---- Trend chart ---------------------------------------------------------------------------
 
 const W = 320;
 
-function TrendChart({
+export function TrendChart({
   values,
   last,
   typical,
@@ -102,6 +110,94 @@ function TrendChart({
 
 const MONTH = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+// ---- Aircraft by airfield ------------------------------------------------------------------
+
+/** "06-29 14:22Z (3 h ago)": a time and its age at `at` (the end of the day, or now). */
+function when(ts: string, at: string): string {
+  const h = (Date.parse(at) - Date.parse(ts)) / 3_600_000;
+  const ago = h < 1 ? "under 1 h" : h < 48 ? `${Math.round(h)} h` : `${Math.round(h / 24)} d`;
+  return `${ts.slice(5, 10)} ${hhmm(ts)} (${ago} ago)`;
+}
+
+function Aircraft({ p, detail }: { p: PositionRow; detail: string }) {
+  return (
+    <li>
+      {p.callsign && <b>{p.callsign} </b>}
+      {TYPE_LABEL[p.type] ?? p.type}{" "}
+      <a
+        className="hexlink"
+        href={`https://globe.adsb.lol/?icao=${p.hex}`}
+        target="_blank"
+        rel="noreferrer"
+        title="Open this aircraft on globe.adsb.lol (registration, history)"
+      >
+        {p.hex}
+      </a>
+      <span className="muted small"> · {detail}</span>
+    </li>
+  );
+}
+
+export function AirfieldCard({
+  f,
+  at,
+  name,
+  onClose,
+}: {
+  f: FieldGroup;
+  at: string;
+  name: (id: string) => string;
+  onClose: () => void;
+}) {
+  const card = useRef<HTMLElement>(null);
+  useEffect(() => {
+    card.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [f.code]);
+  return (
+    <article className="card field" ref={card}>
+      <header>
+        <h3>
+          {f.code} <span className="muted">{f.name}</span>
+        </h3>
+        <button className="link close" onClick={onClose} aria-label="Close airfield">
+          ✕
+        </button>
+      </header>
+      <p className="muted small">{name(f.ccmd)}</p>
+      <h4>On the ground ({f.ground.length})</h4>
+      {f.ground.length === 0 && <p className="muted small">None last seen here.</p>}
+      <ul className="ids">
+        {f.ground.map((p) => (
+          <Aircraft
+            key={p.hex}
+            p={p}
+            detail={`${p.from_airfield ? `from ${p.from_airfield}, ` : ""}landed ${when(p.ts, at)}`}
+          />
+        ))}
+      </ul>
+      {f.lost.length > 0 && (
+        <>
+          <h4>Left here, then lost from view in the air ({f.lost.length})</h4>
+          <p className="muted small">
+            Possibly still flying, or landed where no receiver hears it.
+          </p>
+          <ul className="ids">
+            {f.lost.map((p) => (
+              <Aircraft
+                key={p.hex}
+                p={p}
+                detail={`left ${p.departed ? when(p.departed, at) : "?"}; last seen ${when(p.ts, at)} over ${name(p.ccmd)}`}
+              />
+            ))}
+          </ul>
+        </>
+      )}
+    </article>
+  );
+}
+
+const TOP_FIELDS = 8;
+
 // ---- Panel ---------------------------------------------------------------------------------
 
 function signed(n: number): string {
@@ -140,6 +236,10 @@ export function OverviewPanel({
   ccmd,
   onCcmd,
   onRegion,
+  grouped,
+  field,
+  onField,
+  at,
 }: {
   view: DayView;
   meta: SiteMeta | null;
@@ -147,6 +247,10 @@ export function OverviewPanel({
   ccmd: string | null;
   onCcmd: (id: string | null) => void;
   onRegion: (id: string | null) => void;
+  grouped: Grouped;
+  field: string | null;
+  onField: (code: string | null) => void;
+  at: string;
 }) {
   const th = view.theaters;
   const ccmds = useMemo(() => meta?.ccmds?.map((c) => c.id) ?? [], [meta]);
@@ -168,9 +272,23 @@ export function OverviewPanel({
   const typical = typicalOf(series, span, skip);
   const totalTypical = th ? typicalOf(totalSeries(th, family, ccmds), span, skip) : null;
   const [showHeld, setShowHeld] = useState(true);
+  const [allFields, setAllFields] = useState(false);
+  const selected = grouped.fields.find((f) => f.code === field);
+  const onGround = grouped.fields.reduce((n, f) => n + f.ground.length, 0);
+  const lost = grouped.fields.reduce((n, f) => n + f.lost.length, 0) + grouped.lostUnknown.length;
+  const fieldsWithGround = grouped.fields.filter((f) => f.ground.length > 0).length;
+  const shownFields = (ccmd ? grouped.fields.filter((f) => f.ccmd === ccmd) : grouped.fields).slice(
+    0,
+    allFields ? undefined : TOP_FIELDS,
+  );
+  const latestLost = [...grouped.fields.flatMap((f) => f.lost), ...grouped.lostUnknown]
+    .map((p) => p.ts)
+    .sort()
+    .pop();
 
   return (
     <div className="overview">
+      {selected && <AirfieldCard f={selected} at={at} name={name} onClose={() => onField(null)} />}
       <section>
         <h2>What stands out</h2>
         <p className="muted small">
@@ -219,6 +337,100 @@ export function OverviewPanel({
               <span className="muted"> · typical {Math.round(totalTypical)}</span>
             )}
           </p>
+          <ul className="status">
+            <li>
+              <i className="pt ground" /> <b>{onGround}</b> on the ground at {fieldsWithGround}{" "}
+              airfields
+            </li>
+            <li>
+              <i className="pt air" /> <b>{grouped.airborne.length}</b> airborne
+              {view.meta.tier === "official" ? " at the end of the day" : " now"}
+            </li>
+            <li>
+              <i className="pt ring" /> <b>{lost}</b> lost from view in the air
+              {latestLost && <span className="muted"> · latest {when(latestLost, at)}</span>}
+            </li>
+          </ul>
+          <table className="tbl where">
+            <thead>
+              <tr>
+                <th>Airfield{ccmd ? ` in ${name(ccmd)}` : ""}</th>
+                <th className="num" title="Last seen on the ground here">
+                  Ground
+                </th>
+                <th className="num" title="Last flight left here, then lost from view in the air">
+                  Lost
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {shownFields.map((f) => (
+                <tr
+                  key={f.code}
+                  className={f.code === field ? "sel" : ""}
+                  onClick={() => onField(f.code === field ? null : f.code)}
+                >
+                  <td>
+                    <b>{f.code}</b> <span className="muted small">{f.name}</span>
+                  </td>
+                  <td className="num">{f.ground.length || "–"}</td>
+                  <td className="num muted">{f.lost.length || "–"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {grouped.fields.length > TOP_FIELDS && !ccmd && (
+            <button className="link" onClick={() => setAllFields(!allFields)}>
+              {allFields
+                ? "Show the top " + TOP_FIELDS
+                : `Show all ${grouped.fields.length} airfields`}
+            </button>
+          )}
+          {grouped.airborne.length > 0 && (
+            <details className="about">
+              <summary>Airborne ({grouped.airborne.length})</summary>
+              <ul className="ids">
+                {grouped.airborne.map((p) => (
+                  <Aircraft
+                    key={p.hex}
+                    p={p}
+                    detail={`${p.from_airfield ? `from ${p.from_airfield}, ` : ""}last seen ${when(p.ts, at)} over ${name(p.ccmd)}`}
+                  />
+                ))}
+              </ul>
+            </details>
+          )}
+          {grouped.lostUnknown.length > 0 && (
+            <details className="about">
+              <summary>Lost from view, departure not known ({grouped.lostUnknown.length})</summary>
+              <ul className="ids">
+                {grouped.lostUnknown.map((p) => (
+                  <Aircraft
+                    key={p.hex}
+                    p={p}
+                    detail={`last seen ${when(p.ts, at)} over ${name(p.ccmd)}`}
+                  />
+                ))}
+              </ul>
+            </details>
+          )}
+          {grouped.groundUnknown.length > 0 && (
+            <details className="about">
+              <summary>
+                On the ground, airfield not identified ({grouped.groundUnknown.length})
+              </summary>
+              <ul className="ids">
+                {grouped.groundUnknown.map((p) => (
+                  <Aircraft
+                    key={p.hex}
+                    p={p}
+                    detail={`${p.lat.toFixed(2)}, ${p.lon.toFixed(2)} · ${when(p.ts, at)}`}
+                  />
+                ))}
+              </ul>
+            </details>
+          )}
+          <h3 className="sub">By combatant command</h3>
           <table className="tbl where">
             <thead>
               <tr>
@@ -256,9 +468,8 @@ export function OverviewPanel({
             </tbody>
           </table>
           <p className="muted small">
-            Map: each aircraft at its last known position (where its latest flight started or
-            ended). Solid: seen in the last 24 hours. Aircraft not broadcasting aren't counted, so
-            these are floors.
+            Each aircraft counts where its latest flight ended (or, if it is still flying, where it
+            is). Aircraft not broadcasting aren't counted, so these are floors.
           </p>
         </section>
       )}

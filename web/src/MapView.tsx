@@ -7,6 +7,7 @@ import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import { useEffect, useMemo, useRef } from "react";
 import { bucket, type Cell, RAMP } from "./heat";
 import type { Arc } from "./theater";
+import type { FieldGroup, Grouped } from "./overview";
 import type { Layer } from "./state";
 import { TYPE_LABEL } from "./theater";
 import type { Ccmd, PositionRow, Region } from "./types";
@@ -21,9 +22,10 @@ interface Props {
   layer: Layer;
   cells: Cell[];
   unit: string;
-  // Positions layer: each aircraft's latest fix; solid when seen within `freshHours` of `at`.
-  positions: PositionRow[];
-  at: string;
+  // Positions layer: aircraft grouped at airfields; dots only for those still airborne.
+  grouped: Grouped;
+  selectedField: string | null;
+  onField: (code: string | null) => void;
   showRegions: boolean;
   regions: Region[];
   selectedRegion: string | null;
@@ -83,21 +85,21 @@ export function regionBounds(region: Region): [[number, number], [number, number
   ];
 }
 
-const FRESH_HOURS = 24;
-const POS: [number, number, number] = [42, 120, 214];
+const POS: [number, number, number] = [42, 120, 214]; // on the ground (series slot 1)
+const AIR: [number, number, number] = [235, 104, 52]; // airborne (slot 2)
 
-const QUALITY: Record<PositionRow["quality"], string> = {
-  ground: "on the ground",
-  aloft: "lost from view in the air",
-  last_seen: "still airborne",
-};
+/** Marker radius in pixels for `n` aircraft on the ground (area grows with the count). */
+export function fieldRadius(n: number): number {
+  return n > 0 ? 4 + 2.2 * Math.sqrt(n) : 0;
+}
 
 export function MapView({
   layer,
   cells,
   unit,
-  positions,
-  at,
+  grouped,
+  selectedField,
+  onField,
   showRegions,
   regions,
   selectedRegion,
@@ -159,9 +161,19 @@ export function MapView({
   }, [selectedRegion, regions]);
 
   useEffect(() => {
-    const fresh = (p: PositionRow) =>
-      (Date.parse(at) - Date.parse(p.ts)) / 3_600_000 <= FRESH_HOURS;
-    const dim = (p: PositionRow) => selectedCcmd !== null && p.ccmd !== selectedCcmd;
+    const m = map.current;
+    const f = grouped.fields.find((x) => x.code === selectedField);
+    if (!m || !f) return;
+    m.flyTo({ center: [f.lon, f.lat], zoom: Math.max(m.getZoom(), 6), duration: 600 });
+  }, [selectedField, grouped]);
+
+  useEffect(() => {
+    const dim = (ccmd: string) => selectedCcmd !== null && ccmd !== selectedCcmd;
+    const alpha = (ccmd: string, a: number) => (dim(ccmd) ? Math.round(a / 6) : a);
+    const pickField = (info: { object?: unknown }) => {
+      const code = (info.object as FieldGroup | undefined)?.code ?? null;
+      onField(code === selectedField ? null : code);
+    };
     overlay.current?.setProps({
       layers: [
         theater
@@ -227,35 +239,71 @@ export function MapView({
             updateTriggers: { getFillColor: max, getLineColor: max },
           }),
         layer === "positions" &&
-          new ScatterplotLayer<PositionRow>({
-            id: "positions",
-            data: positions,
+          new ScatterplotLayer<FieldGroup>({
+            id: "lost-rings",
+            data: grouped.fields.filter((f) => f.lost.length > 0),
             getPosition: (d) => [d.lon, d.lat],
             radiusUnits: "pixels",
-            getRadius: (d) => (fresh(d) ? 5 : 4),
+            getRadius: (d) => fieldRadius(d.ground.length) + 4,
+            filled: false,
             stroked: true,
             lineWidthUnits: "pixels",
-            getLineWidth: (d) => (fresh(d) ? 1 : 1.5),
-            getFillColor: (d) =>
-              [...POS, dim(d) ? 20 : fresh(d) ? 235 : 40] as [number, number, number, number],
-            getLineColor: (d) =>
-              (fresh(d) ? [255, 255, 255, dim(d) ? 40 : 230] : [...POS, dim(d) ? 40 : 200]) as [
-                number,
-                number,
-                number,
-                number,
-              ],
+            getLineWidth: 1.5,
+            getLineColor: (d) => [...POS, alpha(d.ccmd, 170)] as [number, number, number, number],
             pickable: true,
-            onClick: (info) => {
-              const id = (info.object as PositionRow | undefined)?.ccmd ?? null;
-              onCcmd?.(id === selectedCcmd ? null : id);
-            },
+            onClick: pickField,
+            updateTriggers: { getLineColor: selectedCcmd },
+          }),
+        layer === "positions" &&
+          new ScatterplotLayer<FieldGroup>({
+            id: "fields",
+            data: grouped.fields.filter((f) => f.ground.length > 0),
+            getPosition: (d) => [d.lon, d.lat],
+            radiusUnits: "pixels",
+            getRadius: (d) => fieldRadius(d.ground.length),
+            stroked: true,
+            lineWidthUnits: "pixels",
+            getLineWidth: (d) => (d.code === selectedField ? 3 : 1),
+            getFillColor: (d) => [...POS, alpha(d.ccmd, 225)] as [number, number, number, number],
+            getLineColor: (d) =>
+              (d.code === selectedField
+                ? [11, 11, 11, 255]
+                : [255, 255, 255, alpha(d.ccmd, 230)]) as [number, number, number, number],
+            pickable: true,
+            onClick: pickField,
             updateTriggers: {
-              getFillColor: [selectedCcmd, at],
-              getLineColor: [selectedCcmd, at],
-              getRadius: at,
-              getLineWidth: at,
+              getFillColor: selectedCcmd,
+              getLineColor: [selectedCcmd, selectedField],
+              getLineWidth: selectedField,
             },
+          }),
+        layer === "positions" &&
+          new TextLayer<FieldGroup>({
+            id: "field-counts",
+            data: grouped.fields.filter((f) => f.ground.length > 1),
+            getPosition: (d) => [d.lon, d.lat],
+            getText: (d) => String(d.ground.length),
+            getSize: 10,
+            getColor: (d) => [255, 255, 255, alpha(d.ccmd, 255)],
+            fontWeight: 700,
+            getTextAnchor: "middle",
+            getAlignmentBaseline: "center",
+            updateTriggers: { getColor: selectedCcmd },
+          }),
+        layer === "positions" &&
+          new ScatterplotLayer<PositionRow>({
+            id: "airborne",
+            data: grouped.airborne,
+            getPosition: (d) => [d.lon, d.lat],
+            radiusUnits: "pixels",
+            getRadius: 4,
+            stroked: true,
+            lineWidthUnits: "pixels",
+            getLineWidth: 1,
+            getFillColor: (d) => [...AIR, alpha(d.ccmd, 235)] as [number, number, number, number],
+            getLineColor: (d) => [255, 255, 255, alpha(d.ccmd, 230)],
+            pickable: true,
+            updateTriggers: { getFillColor: selectedCcmd, getLineColor: selectedCcmd },
           }),
         theater &&
           new ArcLayer<Arc>({
@@ -285,12 +333,17 @@ export function MapView({
           }),
       ],
       getTooltip: ({ object, layer }) => {
-        if (object && layer?.id === "positions") {
+        if (object && (layer?.id === "fields" || layer?.id === "lost-rings")) {
+          const f = object as FieldGroup;
+          const lost = f.lost.length ? `\n${f.lost.length} left here, then lost from view` : "";
+          return { text: `${f.code} ${f.name}\n${f.ground.length} on the ground${lost}` };
+        }
+        if (object && layer?.id === "airborne") {
           const p = object as PositionRow;
           const who = p.callsign ? `${p.callsign} (${p.hex})` : p.hex;
-          const where = p.airfield ? ` at ${p.airfield}` : "";
+          const from = p.from_airfield ? ` from ${p.from_airfield}` : "";
           return {
-            text: `${who} · ${TYPE_LABEL[p.type] ?? p.type}\nlast fix ${p.ts.slice(5, 10)} ${hhmm(p.ts)}${where}, ${QUALITY[p.quality]}`,
+            text: `${who} · ${TYPE_LABEL[p.type] ?? p.type}${from}\nairborne, last seen ${hhmm(p.ts)}`,
           };
         }
         if (object && layer?.id === "transits") {
@@ -313,8 +366,9 @@ export function MapView({
     cells,
     max,
     unit,
-    positions,
-    at,
+    grouped,
+    selectedField,
+    onField,
     showRegions,
     regionBoxes,
     selectedRegion,
@@ -347,10 +401,13 @@ export function MapView({
       ) : (
         <div className="legend pos-legend">
           <span>
-            <i className="pt fresh" /> last fix within {FRESH_HOURS} h
+            <i className="pt ground" /> on the ground (size: aircraft)
           </span>
           <span>
-            <i className="pt old" /> 1–14 days ago
+            <i className="pt ring" /> ring: left there, lost from view
+          </span>
+          <span>
+            <i className="pt air" /> airborne
           </span>
         </div>
       )}

@@ -25,8 +25,13 @@ _Last updated: 2026-10-28 (M5d)_
 - New default tab **Overview**: what stands out → where they are → over time, one family.
   - Stored official alerts once the run exists for a day; otherwise **indicators** (D1/D6/D7 +
     coverage guard run at export by `views/indicators.py`, never stored). Suppressed = "held back".
-  - Map defaults to each aircraft's latest fix (`theaters.positions`, with callsign); heat map is
-    the "Activity" mode. Region boxes only on Regions/Flights. Family is a 3-button switch.
+  - Map groups aircraft by airfield (owner, 2026-10-28): marker = on the ground there, ring =
+    left there then lost from view, dots only for airborne. Click → airfield card. Departure falls
+    back to the last airfield seen on the ground. ~1/4 of lost tankers still have no known origin.
+    No tail numbers in our data; hex links to globe.adsb.lol. Heat map = "Activity" mode.
+  - **Airfields** tab: card per airfield (today vs previous 56 days: avg/min/max/chart; left here
+    airborne / not seen). New daily `aggregates/airfield_presence`; scratch data backfilled with
+    `tw build-theater`. Main data needs the same after the merge (step 4 below covers it).
   - Trends: `dashboard.history_days: 180` (detectors.yaml, dashboard only). Schema 3.
 - Local export re-done (scratch data); Blob and the live site are still schema 2 until published.
 

@@ -163,6 +163,9 @@ select {
   grid-template-columns: 1fr 400px;
   min-height: 0;
 }
+.body.wide {
+  grid-template-columns: 1fr minmax(400px, 46%); /* room for two or three airfield cards a row */
+}
 .map-col {
   position: relative;
   min-height: 0;
@@ -483,7 +486,8 @@ tr.faint {
     height: auto;
     min-height: 100dvh;
   }
-  .body {
+  .body,
+  .body.wide {
     grid-template-columns: 1fr;
   }
   .map-col {
@@ -786,11 +790,174 @@ tr.faint {
   margin-right: 4px;
   vertical-align: -1px;
 }
-.pt.fresh {
+.pt.ground {
   background: rgb(42 120 214);
   box-shadow: 0 0 0 1px #fff;
 }
-.pt.old {
-  background: rgb(42 120 214 / 0.16);
-  border: 1.5px solid rgb(42 120 214 / 0.8);
+.pt.ring {
+  border: 1.5px solid rgb(42 120 214 / 0.7);
+}
+.pt.air {
+  width: 8px;
+  height: 8px;
+  background: rgb(235 104 52);
+  box-shadow: 0 0 0 1px #fff;
+}
+
+/* aircraft by airfield */
+.status {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 10px;
+  display: grid;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.card.field header {
+  justify-content: space-between;
+  flex-wrap: nowrap;
+}
+.card.field h4 {
+  margin: 10px 0 2px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+.card.field {
+  scroll-margin-top: 56px; /* clear of the sticky tabs on phones */
+  border-color: var(--accent);
+}
+.hexlink {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--accent);
+}
+.overview h3.sub {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 14px 0 4px;
+}
+
+/* airfield cards ("baseball cards") */
+.bcards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.bcard {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px 8px;
+  cursor: pointer;
+  min-width: 0;
+}
+.bcard:hover {
+  border-color: var(--text-muted);
+}
+.bcard.sel {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.bc-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+}
+.bc-top b {
+  font-size: 15px;
+  letter-spacing: 0.02em;
+}
+.bc-ccmd {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.bc-name {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bc-hero {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 4px;
+}
+.bc-big {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.bc-unit {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.bc-flag {
+  justify-self: start;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+.bc-types {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bc-chart .tick,
+.bc-chart .tip {
+  display: none;
+}
+.bc-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  border-top: 1px solid var(--line);
+  padding-top: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.bc-stats small {
+  display: block;
+  font-size: 9.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.airfields .filters {
+  flex-wrap: wrap;
+}
+.airfields .filters input {
+  flex: 1 1 180px;
+}
+.airfields .filters select {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+.bc-out {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.bc-out b {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.bc-unit {
+  white-space: nowrap;
 }
