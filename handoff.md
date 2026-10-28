@@ -21,24 +21,9 @@ _Last updated: 2026-10-28_
 - adsb.lol returns HTTP 429 at times. The worker fails over to adsb.fi and back every 15 min. Watch
   for it in the trial report.
 
-## M5 plan (owner decisions 2026-10-28: Vercel + static day files; public)
-- `views/day.py` `day_view(data_dir, day)` holds one dict per day:
-  - `meta` (tier, baseline_as_of);
-  - `heat` (r4 x hour x family);
-  - `regions` (observed vs snapshot band);
-  - `coverage`, `alerts` (official + provisional, tagged), `sorties` (summaries).
-  - It reads only partitions <= day.
-  - The r6 day heat goes in a separate lazy file (about 40k cells/day).
-  - Tier: official if `points/date=D` exists, else provisional from `live/`.
-- `export/`: `tw export --from --to --dest local:<dir>|blob` writes `days/D.json`, `days/D.r6.json`,
-  `index.json` and `meta.json`.
-  - Blob PUTs are rate-limited.
-  - The token is in `.env` only.
-  - Worker job `export` runs after provisional/official (enabled only after the trial).
-- `web/`: Vite + React + TS, MapLibre (OpenFreeMap) + deck.gl H3HexagonLayer.
-  - URL state `?date&family&region&res&hour`.
-  - Tabs: Alerts / Regions / Sorties. Bottom sheet on phone.
-  - Attribution footer. No approve/reject (M7).
+## M5 (owner decisions 2026-10-28: Vercel + static day files; public)
+- `views/day.py` (point-in-time, never writes) -> `export/` (local or Blob, rate-limited) ->
+  `web/` (Vite/React, MapLibre + deck.gl). Worker `export` job hourly; live only after the trial.
 - Deferred to M5b: per-hex baseline diff toggle, airfield board, playback, compare, re-run.
 
 ## M5 status
